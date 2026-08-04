@@ -1,0 +1,65 @@
+# Last Pass
+
+Endless slingshot climber. Landscape or portrait mobile web game, plain HTML5
+canvas, zero dependencies, one file (`index.html`). Prototyped Aug 2-4 2026
+across five pivots; the exploration history lives in `~/dev/last-pass-game`
+(git repo, `prototypes/` folder).
+
+## The game
+
+A ninja (gold ball placeholder for now) climbs an endless tower of switchback
+platforms. Drag anywhere on screen, release to sling — the pull vector is the
+shot, a dotted preview simulates the true trajectory live (including while
+airborne, so you queue the next sling mid-flight and release at the right
+moment: that timing is the core skill).
+
+- **Three slings per landing, diminishing**: each air sling launches at
+  `airDecay` (0.8) × the previous power. Touching anything reloads all three.
+- **Map scale is defined in jump units**: `TIERS = [330, 560, 720]` px rises =
+  clean single / committed double / crisp triple, set at ~75% of the measured
+  chain ceilings (444 / 733 / 918 px). If `gravity`, `maxThrow`, or `airDecay`
+  change, re-measure ceilings with the real integrator and reset TIERS.
+- **No deaths.** Worst case you fall all the way to the ground floor. Loss of
+  altitude IS the punishment currency.
+- **Zones**: sky palette lerps and zone names announce as you climb
+  (Courtyard → Ramparts → Cloudbank → High Sky → Starfield → Moon's Reach).
+
+## Physics feel (user-dialed on device, do not casually change)
+
+gravity 2300 · slingPower 7 · maxThrow 1500 · restitution 0.4 · damping 0.2 ·
+groundFric 6 (character skid: 1000px/s stops in ~0.4s) · ballR 31 · jumps 3 ·
+airDecay 0.8. Tuning philosophy: **control and readability over speed; weight
+over zip**. Difficulty comes from generation (tier mix, gaps), never from
+re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
+
+## Vision / roadmap (agreed with Max)
+
+1. Sprite ninja character — 3 poses: aim-crouch, flight-tuck, landing-skid.
+2. Stealth, not combat: sentries/searchlights with vision cones. Being spotted
+   never kills — enemies knock you off platforms. Stealth failure converts to
+   fall risk; stillness (the natural resting state) is safety.
+3. Catch floors every ~250m: arrest mega-falls, house sentries/NPCs/anchors.
+4. Mission gates every 10,000 ft over one endless tower; narrative in authored
+   "landmark floors" between procedural stretches.
+5. Monetization: content + cosmetics IAP (zone packs, ninja skins/trails).
+   Max explicitly rejected selling checkpoints/progress-recovery ("seems like
+   I make you lose on purpose"). Coins (persistent, `lp-coins`) are the soft
+   currency.
+6. "Reverse pachinko" is the pitch line. Naming direction: Chinese —
+   弹弓 dàngōng ("elastic bow"/slingshot); explore variations.
+
+## Dev workflow
+
+- Serve locally: no-cache python server on :8000 (see scratchpad `serve.py`
+  pattern — `Cache-Control: no-store`), phone on same wifi hits the Mac's LAN
+  IP. ngrok (installed + authed) for remote playtesters: `ngrok http 8000`.
+- Headless testing: extract the script with awk, stub the DOM with a recursive
+  Proxy, `eval` + drive functions directly in node. Used for: measuring jump
+  apexes with the real integrator, generation fuzzing, flood-fill
+  climbability proofs (see old repo's scratch harnesses).
+- If generation ever gains obstacles that could seal a route, use the
+  witness/flood-fill verification pattern from the prototypes: each chunk
+  returns a known-open point, prove reachability from the previous one with a
+  ball-radius-inflated flood fill, reroll on failure. Never ship "probably
+  passable".
+- localStorage keys: `lp-zig-best` (best altitude), `lp-coins`.

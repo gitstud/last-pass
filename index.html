@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+</head>
+<body>
+<title>Last Pass</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#101623;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior:none; }
+  #c { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none;
+    user-select:none; -webkit-user-select:none; }
+  #gear { position:fixed; top:10px; right:12px; z-index:20; width:44px; height:44px;
+    border:1px solid rgba(255,255,255,.18); border-radius:10px; background:rgba(16,22,35,.7);
+    color:#8fa3c0; font-size:22px; line-height:1; cursor:pointer; }
+  #gear:focus-visible { outline:2px solid #5fd9e8; }
+  #panel { position:fixed; top:0; right:0; bottom:0; z-index:19; width:270px; padding:56px 16px 16px;
+    background:rgba(13,18,30,.94); border-left:1px solid rgba(95,217,232,.25); color:#cfd9ea;
+    font-family:"Avenir Next Condensed","Arial Narrow",system-ui,sans-serif;
+    overflow-y:auto; display:none; box-sizing:border-box; }
+  #panel.open { display:block; }
+  #panel h2 { margin:0 0 4px; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:#5fd9e8; }
+  #panel p  { margin:0 0 14px; font-size:12px; color:#7d8aa3; }
+  .row { margin-bottom:12px; }
+  .row label { display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;
+    letter-spacing:.04em; }
+  .row label output { color:#ffd166; font-variant-numeric:tabular-nums; }
+  .row input[type=range] { width:100%; accent-color:#5fd9e8; }
+  #panel button { width:100%; margin-top:6px; padding:9px 0; font:inherit; font-size:13px;
+    letter-spacing:.1em; text-transform:uppercase; color:#cfd9ea; background:rgba(95,217,232,.12);
+    border:1px solid rgba(95,217,232,.4); border-radius:8px; cursor:pointer; }
+</style>
+
+<canvas id="c"></canvas>
+<button id="gear" aria-label="Physics tuning">&#9881;&#65039;</button>
+<div id="panel">
+  <h2>Feel</h2>
+  <p>Game is paused while tuning. Changes apply instantly.</p>
+  <div id="rows"></div>
+  <button id="restart">Restart climb</button>
+</div>
+
+<script>
+'use strict';
+/* =============================================================
+   LAST PASS — the focused build.
+   An endless climb up switchback platforms. Three slings per landing,
+   each air sling weaker than the last. Touch anything to reload.
+   No deaths: the only enemy (for now) is the long way down.
+
+   World scale is defined in jump units — TIERS are the platform rises
+   for a clean single, a committed double, and a crisp triple, set to
+   ~75% of the measured chain ceilings (444 / 733 / 918px). If gravity,
+   maxThrow or airDecay change, re-measure and reset TIERS.
+
+   Roadmap: ninja sprite (aim-crouch / tuck / skid) -> sentry enemies
+   (spotted = knocked down, never killed) -> catch floors every ~250m
+   -> mission gates every 10,000 ft.
+   ============================================================= */
+const CFG = {
+  gravity:     2300,
+  slingPower:  7,
+  maxThrow:    1500,
+  restitution: 0.4,
+  damping:     0.2,
+  rollFric:    0.006,
+  groundFric:  6,
+  airDecay:    0.8,
+  ballR:       31,
+  jumps:       3,
+};
+const TUNE = [
+  ['gravity','Gravity',1000,3600,50],
+  ['slingPower','Sling power',3,16,0.5],
+  ['maxThrow','Max launch speed',800,4000,50],
+  ['restitution','Bounciness',0.1,0.95,0.05],
+  ['damping','Air drag',0,0.7,0.02],
+  ['groundFric','Ground friction',0,12,0.5],
+  ['airDecay','Air jump decay',0.4,1,0.05],
+  ['ballR','Ball size',14,40,1],
+  ['jumps','Jumps per landing',1,5,1],
+];
+const PULL_MAX = 270;
+const TIERS = [330, 560, 720];
+
+/* Altitude zones: the world gets stranger the higher you climb. */
+const ZONES = [
+  { at: 0,    name: 'THE COURTYARD',   top: '#0d1220', bot: '#18202f' },
+  { at: 120,  name: 'THE RAMPARTS',    top: '#0e1224', bot: '#1c2338' },
+  { at: 300,  name: 'THE CLOUDBANK',   top: '#101a2e', bot: '#2c3a57' },
+  { at: 550,  name: 'THE HIGH SKY',    top: '#0a1226', bot: '#20355e' },
+  { at: 850,  name: 'THE STARFIELD',   top: '#05070f', bot: '#0e1526' },
+  { at: 1200, name: "THE MOON'S REACH", top: '#020308', bot: '#090d18' },
+];
+
+/* ================= Canvas / coords ================= */
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let LH = 800, LW = 1600, cx = 800, scale = 1, dpr = 1;
+let wasPortrait = null, orientFlip = false;
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  dpr = Math.min(devicePixelRatio || 1, 3);
+  cv.width = w * dpr; cv.height = h * dpr;
+  const portrait = h > w;
+  if (portrait) { LW = 800; scale = w / 800; LH = h / scale; }
+  else          { LH = 800; scale = h / 800; LW = w / scale; }
+  cx = LW / 2;
+  if (wasPortrait !== null && wasPortrait !== portrait) orientFlip = true;
+  wasPortrait = portrait;
+}
+addEventListener('resize', resize);
+resize();
+
+/* ================= State ================= */
+const S_READY = 0, S_PLAY = 1;
+let state = S_READY;
+let bestAlt = +(sGet('lp-zig-best') || 0);
+let coinsT = +(sGet('lp-coins') || 0);
+let GROUND_Y = 700;
+let camX = 0, camY = 0, peakY = 700, milestone = 0, jumpsLeft = 3, zoneIdx = 0;
+let panelOpen = false, SIM = false, groundHit = false;
+let parts = [];
+const world = { flats:[], coins:[] };
+let cursor = { x: 0, y: 0 }, dir = 1;
+const ball = { x:0, y:0, vx:0, vy:0, trail:[] };
+const aims = new Map();
+
+function sGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function sSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+function rnd(a,b){ return a + Math.random() * (b - a); }
+function altOf(y){ return Math.max(0, Math.round((GROUND_Y - CFG.ballR - y) / 10)); }
+function zoneAt(a){
+  let z = 0;
+  for (let i = 0; i < ZONES.length; i++) if (a >= ZONES[i].at) z = i;
+  return z;
+}
+function lerpHex(c1, c2, t){
+  const p = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const a = p(c1), b = p(c2);
+  return 'rgb(' + a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',') + ')';
+}
+
+/* ================= Zigzag generation ================= */
+function coinArcAt(ax, ay){
+  const k = 3 + (Math.random() < 0.5 ? 1 : 0), arcH = rnd(28, 60);
+  for (let i = 0; i < k; i++) {
+    const u = 2 * i / (k - 1) - 1;
+    world.coins.push({ x: ax + u * 56 * (k - 1) / 2, y: ay - arcH * (1 - u * u), got: false });
+  }
+}
+function tierPick(a){
+  const w = a < 120 ? [0.66, 0.26, 0.08] : a < 350 ? [0.5, 0.35, 0.15] : [0.42, 0.38, 0.20];
+  const r = Math.random();
+  return r < w[0] ? 0 : r < w[0] + w[1] ? 1 : 2;
+}
+function genRun(){
+  const a = altOf(cursor.y);
+  const steps = 4 + (rnd(0, 4) | 0);
+  for (let i = 0; i < steps; i++) {
+    const t = tierPick(a);
+    const rise = TIERS[t] + rnd(-45, 5);
+    const dx = dir * (t === 0 ? rnd(170, 300) : t === 1 ? rnd(200, 400) : rnd(240, 460));
+    cursor = { x: cursor.x + dx, y: cursor.y - rise };
+    const w = rnd(150, 250);
+    world.flats.push({ x0: cursor.x - w / 2, x1: cursor.x + w / 2, y: cursor.y });
+    const roll = Math.random();
+    if (roll < 0.45) world.coins.push({ x: cursor.x, y: cursor.y - 52, got: false });
+    else if (roll < 0.7) coinArcAt(cursor.x - dx / 2, cursor.y + rise / 2 - rnd(0, 50));
+  }
+  // wide turn platform: an easy step, a place to breathe, then reverse
+  const rise = TIERS[0] + rnd(-40, 0);
+  cursor = { x: cursor.x + dir * rnd(160, 260), y: cursor.y - rise };
+  const w = rnd(260, 340);
+  world.flats.push({ x0: cursor.x - w / 2, x1: cursor.x + w / 2, y: cursor.y });
+  if (Math.random() < 0.4) coinArcAt(cursor.x, cursor.y - 90);
+  dir = -dir;
+  const g = world.flats[0];
+  g.x0 = Math.min(g.x0, cursor.x - 900);
+  g.x1 = Math.max(g.x1, cursor.x + 900);
+}
+function ensureWorld(){
+  while (cursor.y > camY - 1400) genRun();
+}
+
+function reset(){
+  GROUND_Y = LH - 100;
+  world.flats = [{ x0: -1400, x1: 1400, y: GROUND_Y, ground: true }];
+  world.coins = [];
+  cursor = { x: 0, y: GROUND_Y }; dir = 1;
+  ball.x = 0; ball.y = GROUND_Y - CFG.ballR - 1;
+  ball.vx = 0; ball.vy = 0; ball.trail = [];
+  camX = ball.x - LW / 2; camY = ball.y - LH * 0.55;
+  peakY = ball.y; milestone = 0; zoneIdx = 0; jumpsLeft = CFG.jumps;
+  aims.clear(); parts = [];
+  state = S_READY;
+  ensureWorld();
+}
+
+/* ================= Physics ================= */
+function collideRect(b, rx, ry, rw, rh){
+  const r = CFG.ballR;
+  const nx0 = Math.max(rx, Math.min(b.x, rx + rw));
+  const ny0 = Math.max(ry, Math.min(b.y, ry + rh));
+  let dx = b.x - nx0, dy = b.y - ny0;
+  const d2 = dx * dx + dy * dy;
+  if (d2 > r * r) return;
+  let nxx, nyy, pen;
+  const d = Math.sqrt(d2);
+  if (d > 1e-6) { nxx = dx / d; nyy = dy / d; pen = r - d; }
+  else {
+    const l = b.x - rx, rt = rx + rw - b.x, tp = b.y - ry, bt = ry + rh - b.y;
+    const m = Math.min(l, rt, tp, bt);
+    if (m === l)      { nxx = -1; nyy = 0; pen = l + r; }
+    else if (m === rt){ nxx = 1;  nyy = 0; pen = rt + r; }
+    else if (m === tp){ nxx = 0;  nyy = -1; pen = tp + r; }
+    else              { nxx = 0;  nyy = 1;  pen = bt + r; }
+  }
+  bounce(b, nxx, nyy, pen);
+}
+function bounce(b, nx, ny, pen){
+  b.x += nx * pen; b.y += ny * pen;
+  if (ny < -0.55) groundHit = true;
+  if (!SIM) jumpsLeft = CFG.jumps;   // touching anything reloads
+  const vn = b.vx * nx + b.vy * ny;
+  if (vn < 0) {
+    let tvx = b.vx - vn * nx, tvy = b.vy - vn * ny;
+    tvx *= 1 - CFG.rollFric; tvy *= 1 - CFG.rollFric;
+    const bn = -vn * CFG.restitution;
+    b.vx = tvx + nx * bn; b.vy = tvy + ny * bn;
+    if (-vn > 300) sfx(150, 85, 0.05, 'square', Math.min(0.18, -vn / 9000));
+  }
+}
+function physBall(b, dt){
+  const r = CFG.ballR;
+  b.vy += CFG.gravity * dt;
+  const dmp = Math.exp(-CFG.damping * dt);
+  b.vx *= dmp; b.vy *= dmp;
+  b.x += b.vx * dt; b.y += b.vy * dt;
+  groundHit = false;
+  for (let it = 0; it < 2; it++) {
+    for (const f of world.flats) {
+      const fh = f.ground ? 600 : 30;
+      if (f.y > b.y + r || f.y + fh < b.y - r || f.x0 > b.x + r || f.x1 < b.x - r) continue;
+      collideRect(b, f.x0, f.y, f.x1 - f.x0, fh);
+    }
+  }
+  // character-style skid: strong horizontal braking while on a surface
+  if (groundHit) b.vx *= Math.exp(-CFG.groundFric * dt);
+}
+
+function step(dt){
+  physBall(ball, dt);
+  camX += (ball.x - LW * 0.5 - camX) * Math.min(1, dt * 8);
+  camY += (ball.y - LH * 0.55 - camY) * Math.min(1, dt * 8);
+  ensureWorld();
+
+  if (ball.y < peakY) peakY = ball.y;
+  const alt = altOf(peakY);
+  if (alt >= bestAlt) { bestAlt = alt; sSet('lp-zig-best', bestAlt); }
+  const m = Math.floor(alt / 100);
+  if (m > milestone) {
+    milestone = m;
+    parts.push({ x: ball.x, y: ball.y - 70, t: 0, txt: (m * 100) + 'm!', col: '#5fd9e8' });
+    sfx(700, 1400, 0.2, 'sine', 0.2);
+  }
+  const z = zoneAt(altOf(ball.y));
+  if (z > zoneIdx) {
+    zoneIdx = z;
+    parts.push({ x: ball.x, y: ball.y - 120, t: 0, txt: ZONES[z].name, col: '#ffd166' });
+    sfx(520, 1040, 0.3, 'sine', 0.2);
+  } else if (z < zoneIdx) zoneIdx = z;
+
+  for (const c of world.coins) {
+    if (c.got || Math.hypot(ball.x - c.x, ball.y - c.y) > CFG.ballR + 17) continue;
+    c.got = true; coinsT++; sSet('lp-coins', coinsT);
+    parts.push({ x: c.x, y: c.y, t: 0, txt: '+1', col: '#ffd166' });
+    sfx(880, 1420, 0.09, 'sine', 0.14);
+  }
+}
+
+/* ================= Slingshot input ================= */
+function pullOf(a){
+  let dx = a.ax - a.x, dy = a.ay - a.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 14) return null;
+  const pull = Math.min(d, PULL_MAX);
+  const used = Math.max(0, CFG.jumps - jumpsLeft);
+  const mult = Math.pow(CFG.airDecay, used);
+  const sp = Math.min(pull * CFG.slingPower, CFG.maxThrow) * mult;
+  return { hx: ball.x - dx / d * pull, hy: ball.y - dy / d * pull,
+           vx: dx / d * sp, vy: dy / d * sp };
+}
+function fire(a){
+  const s = pullOf(a);
+  if (!s) return;
+  if (jumpsLeft <= 0) {
+    parts.push({ x: ball.x, y: ball.y - 70, t: 0, txt: 'LAND TO RELOAD', col: '#ff5d5d' });
+    sfx(160, 90, 0.15, 'square', 0.18);
+    return;
+  }
+  jumpsLeft--;
+  ball.vx = s.vx; ball.vy = s.vy;
+  if (state === S_READY) state = S_PLAY;
+  const sp = Math.hypot(s.vx, s.vy);
+  sfx(200 + Math.min(sp, 3000) * 0.15, 120, 0.09, 'triangle', 0.15);
+}
+function previewPts(a){
+  const s = pullOf(a);
+  if (!s) return [];
+  const b = { x: ball.x, y: ball.y, vx: s.vx, vy: s.vy };
+  const pts = [];
+  SIM = true;
+  for (let i = 0; i < 168; i++) {
+    physBall(b, 1 / 120);
+    if (i % 6 === 0) pts.push({ x: b.x, y: b.y });
+  }
+  SIM = false;
+  return pts;
+}
+
+let ac = null;
+function ensureAudio(){
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
+  if (ac && ac.state === 'suspended') ac.resume();
+}
+function sfx(f0, f1, dur, type, vol){
+  if (SIM || !ac) return;
+  try {
+    const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime;
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(Math.max(f0, 1), t0);
+    o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t0 + dur);
+    g.gain.setValueAtTime(vol || 0.15, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g); g.connect(ac.destination);
+    o.start(t0); o.stop(t0 + dur);
+  } catch(e){}
+}
+
+function onStart(id, x, y){
+  ensureAudio();
+  aims.set(id, { ax: x, ay: y, x, y });
+}
+function onMove(id, x, y){
+  const a = aims.get(id);
+  if (a) { a.x = x; a.y = y; }
+}
+function onEnd(id){
+  const a = aims.get(id);
+  if (a) { fire(a); aims.delete(id); }
+}
+function lpos(e){ return { x: e.clientX / scale, y: e.clientY / scale }; }
+
+cv.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) { const p = lpos(t); onStart(t.identifier, p.x, p.y); }
+}, { passive:false });
+cv.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) { const p = lpos(t); onMove(t.identifier, p.x, p.y); }
+}, { passive:false });
+for (const ev of ['touchend', 'touchcancel'])
+  cv.addEventListener(ev, e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) onEnd(t.identifier);
+  }, { passive:false });
+
+let mouseDown = false;
+cv.addEventListener('mousedown', e => { mouseDown = true;  const p = lpos(e); onStart('m', p.x, p.y); });
+cv.addEventListener('mousemove', e => { if (mouseDown)   { const p = lpos(e); onMove('m', p.x, p.y); } });
+addEventListener('mouseup',      () => { if (mouseDown)   { mouseDown = false; onEnd('m'); } });
+
+/* ================= Rendering ================= */
+function makePattern(draw, w, h){
+  const t = document.createElement('canvas'); t.width = w; t.height = h;
+  draw(t.getContext('2d'));
+  return ctx.createPattern(t, 'repeat');
+}
+const checkerPat = makePattern(c => {
+  c.fillStyle = '#7c4636'; c.fillRect(0, 0, 88, 88);
+  c.fillStyle = '#69392c';
+  c.fillRect(0, 0, 44, 44); c.fillRect(44, 44, 44, 44);
+}, 88, 88);
+
+const HUD = '"Avenir Next Condensed","Arial Narrow",system-ui,sans-serif';
+function txt(str, x, y, size, color, weight, align){
+  ctx.font = (weight || 600) + ' ' + size + 'px ' + HUD;
+  ctx.fillStyle = color; ctx.textAlign = align || 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(str, x, y);
+}
+function drawBall(x, y, alpha){
+  const r = CFG.ballR;
+  ctx.globalAlpha = alpha;
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.15, x, y, r);
+  g.addColorStop(0, '#fff3d0'); g.addColorStop(0.45, '#ffd166'); g.addColorStop(1, '#e09422');
+  ctx.shadowColor = 'rgba(255,200,80,0.75)'; ctx.shadowBlur = 22;
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
+function render(t){
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+  // sky blends between zone palettes as you climb
+  const a = altOf(ball.y);
+  const zi = zoneAt(a);
+  const zn = ZONES[Math.min(zi + 1, ZONES.length - 1)];
+  const span = Math.max(1, zn.at - ZONES[zi].at);
+  const zt = zi === ZONES.length - 1 ? 0 : Math.max(0, Math.min(1, (a - ZONES[zi].at) / span));
+  const sky = ctx.createLinearGradient(0, 0, 0, LH);
+  sky.addColorStop(0, lerpHex(ZONES[zi].top, zn.top, zt));
+  sky.addColorStop(1, lerpHex(ZONES[zi].bot, zn.bot, zt));
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, LW, LH);
+  // stars fade in above the cloudbank
+  const starA = Math.max(0, Math.min(0.9, (a - 400) / 500));
+  if (starA > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.7 * starA) + ')';
+    for (let k = 0; k < 70; k++) {
+      const sx = (k * 379.7) % LW;
+      const sy = ((k * 613.3) - camY * 0.15) % LH;
+      const yy = sy < 0 ? sy + LH : sy;
+      ctx.globalAlpha = starA * (0.3 + ((k * 7) % 10) / 14);
+      ctx.fillRect(sx, yy, 2.2, 2.2);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.save();
+  ctx.translate(-camX, -camY);
+
+  // altitude lines every 100m
+  const first = Math.max(1, Math.ceil((GROUND_Y - CFG.ballR - (camY + LH)) / 1000));
+  for (let k = first; ; k++) {
+    const ly = GROUND_Y - CFG.ballR - k * 1000;
+    if (ly < camY - 30) break;
+    if (ly > camY + LH + 30) continue;
+    ctx.strokeStyle = 'rgba(95,217,232,0.16)'; ctx.lineWidth = 2;
+    ctx.setLineDash([14, 18]);
+    ctx.beginPath(); ctx.moveTo(camX - 40, ly); ctx.lineTo(camX + LW + 40, ly); ctx.stroke();
+    ctx.setLineDash([]);
+    txt((k * 100) + 'm', camX + LW - 16, ly - 18, 22, 'rgba(95,217,232,0.5)', 700, 'right');
+  }
+
+  // platforms + ground
+  for (const f of world.flats) {
+    ctx.fillStyle = checkerPat;
+    ctx.beginPath();
+    if (f.ground) ctx.rect(f.x0, f.y, f.x1 - f.x0, camY + LH + 80 - f.y);
+    else if (ctx.roundRect) ctx.roundRect(f.x0, f.y, f.x1 - f.x0, 30, 12);
+    else ctx.rect(f.x0, f.y, f.x1 - f.x0, 30);
+    ctx.fill();
+    ctx.strokeStyle = '#b06a4b'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(f.x0 + 8, f.y + 3); ctx.lineTo(f.x1 - 8, f.y + 3); ctx.stroke();
+  }
+  // coins
+  for (const c of world.coins) {
+    if (c.got) continue;
+    const bob = 3 * Math.sin(t * 3 + c.x * 0.013);
+    ctx.shadowColor = 'rgba(255,209,102,0.8)'; ctx.shadowBlur = 12;
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(c.x, c.y + bob, 14, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#e09422'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(c.x, c.y + bob, 7.5, 0, 7); ctx.stroke();
+  }
+
+  // trail + ball + jump pips
+  for (let i = 0; i < ball.trail.length; i++) {
+    const p = ball.trail[i], f = (i + 1) / ball.trail.length;
+    ctx.globalAlpha = 0.22 * f;
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(p.x, p.y, CFG.ballR * 0.75 * f, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  drawBall(ball.x, ball.y, 1);
+  if (state === S_PLAY) {
+    for (let i = 0; i < CFG.jumps; i++) {
+      const px = ball.x + (i - (CFG.jumps - 1) / 2) * 16;
+      ctx.fillStyle = i < jumpsLeft ? 'rgba(95,217,232,0.9)' : 'rgba(95,217,232,0.18)';
+      ctx.beginPath(); ctx.arc(px, ball.y - CFG.ballR - 15, 4.5, 0, 7); ctx.fill();
+    }
+  }
+
+  // active pull
+  for (const [, a2] of aims) {
+    const s = pullOf(a2);
+    if (!s) continue;
+    const ok = jumpsLeft > 0;
+    const pts = previewPts(a2);
+    ctx.fillStyle = ok ? '#ffd166' : '#67707f';
+    for (let i = 0; i < pts.length; i++) {
+      ctx.globalAlpha = (0.65 * (1 - i / pts.length) + 0.08) * (ok ? 1 : 0.45);
+      ctx.beginPath(); ctx.arc(pts[i].x, pts[i].y, 5.5 - 2.5 * i / pts.length, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = ok ? 'rgba(255,209,102,0.45)' : 'rgba(120,130,145,0.4)';
+    ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ball.x, ball.y); ctx.lineTo(s.hx, s.hy); ctx.stroke();
+    ctx.lineCap = 'butt';
+    drawBall(s.hx, s.hy, ok ? 0.45 : 0.2);
+    if (!ok) txt('LAND TO RELOAD', ball.x, ball.y - 64, 22, '#ff5d5d', 700);
+  }
+
+  // particles
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, 1 - p.t / 0.9);
+    txt(p.txt, p.x, p.y - p.t * 45, 40, p.col || '#7fe3a0', 700);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // HUD
+  const peak = altOf(peakY);
+  txt(peak + 'm', cx, 48, 54, 'rgba(255,255,255,0.92)', 700);
+  txt(ZONES[zoneIdx].name, cx, 88, 22, 'rgba(255,209,102,0.75)', 700);
+  txt('BEST ' + bestAlt + 'm', 18, 30, 22, 'rgba(143,163,192,0.85)', 600, 'left');
+  ctx.fillStyle = '#ffd166';
+  ctx.beginPath(); ctx.arc(27, 66, 9, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#e09422'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(27, 66, 4.5, 0, 7); ctx.stroke();
+  txt(String(coinsT), 44, 66, 22, '#ffd166', 700, 'left');
+
+  if (state === S_READY) {
+    txt('LAST PASS', cx, LH * 0.24, 80, '#ffd166', 800);
+    txt('AN ENDLESS CLIMB. THREE SLINGS PER LANDING — EACH AIR SLING WEAKER.', cx, LH * 0.345, 25, '#cfd9ea');
+    txt('NO DEATHS. THE ONLY ENEMY IS THE LONG WAY DOWN.', cx, LH * 0.39, 25, '#cfd9ea');
+    ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 3);
+    txt('PULL BACK AND RELEASE TO JUMP', cx, LH * 0.465, 27, '#5fd9e8', 700);
+    ctx.globalAlpha = 1;
+  }
+  if (panelOpen) txt('PAUSED — TUNING', cx, 150, 24, '#5fd9e8', 700);
+}
+
+/* ================= Main loop ================= */
+let tPrev = performance.now(), acc = 0;
+const STEP = 1 / 120;
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = (now - tPrev) / 1000; tPrev = now;
+  if (dt > 0.05) dt = 0.05;
+  if (orientFlip) { orientFlip = false; reset(); }
+  if (!panelOpen) {
+    acc += dt;
+    while (acc >= STEP) { step(STEP); acc -= STEP; }
+  }
+  if ((ball.vx * ball.vx + ball.vy * ball.vy) > 200 * 200) ball.trail.push({ x: ball.x, y: ball.y });
+  else ball.trail.length = 0;
+  if (ball.trail.length > 16) ball.trail.shift();
+  for (const p of parts) p.t += dt;
+  parts = parts.filter(p => p.t < 0.9);
+  render(now / 1000);
+}
+
+/* ================= Tuning panel ================= */
+const rows = document.getElementById('rows');
+for (const [key, label, min, max, stp] of TUNE) {
+  const row = document.createElement('div'); row.className = 'row';
+  const lab = document.createElement('label');
+  const name = document.createElement('span'); name.textContent = label;
+  const out = document.createElement('output'); out.textContent = CFG[key];
+  lab.append(name, out);
+  const inp = document.createElement('input');
+  inp.type = 'range'; inp.min = min; inp.max = max; inp.step = stp; inp.value = CFG[key];
+  inp.addEventListener('input', () => { CFG[key] = +inp.value; out.textContent = inp.value; });
+  row.append(lab, inp);
+  rows.append(row);
+}
+const panel = document.getElementById('panel');
+document.getElementById('gear').addEventListener('click', () => {
+  panelOpen = !panelOpen;
+  panel.classList.toggle('open', panelOpen);
+});
+document.getElementById('restart').addEventListener('click', () => {
+  reset(); panelOpen = false; panel.classList.remove('open');
+});
+
+reset();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
