@@ -107,8 +107,14 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.4.1';
+const VERSION = '0.5';
 const CHANGELOG = [
+  { v: '0.5', date: 'Aug 5', title: 'First-moves tutorial',
+    highlights: ['NEW PLAYERS: EARN YOUR SINGLE, DOUBLE & TRIPLE JUMP'],
+    items: [
+      'A four-step first-moves chain teaches the mechanic: First Sling, Clean Landing, Double Jump, Triple Jump — one objective at a time, confetti when you graduate.',
+      'Shows once per device, then stays out of your way.',
+      'Clearer title-screen instructions for first-time players.' ] },
   { v: '0.4.1', date: 'Aug 5', title: 'The ground is now actually the ground',
     highlights: [],
     items: [ 'Fixed: falling far off to the side could miss the edge of the ground and drop you into the void forever. The ground is now infinite, as advertised.' ] },
@@ -136,6 +142,32 @@ const CHANGELOG = [
     highlights: [],
     items: [ 'Thumb-catch pong, slingshot mini golf, an endless climber, a corridor dungeon, and a zigzag tower — five prototypes in three days, distilled into this game.' ] },
 ];
+
+/* First-moves tutorial: sequential achievements that teach the mechanic.
+   Shown until completed once on this device (lp-tut-done). */
+const TUT = [
+  { key: 'sling',  name: 'FIRST SLING',   label: 'PULL ANYWHERE ON SCREEN, THEN RELEASE' },
+  { key: 'land',   name: 'CLEAN LANDING', label: 'LAND ON A PLATFORM' },
+  { key: 'double', name: 'DOUBLE JUMP',   label: 'SLING AGAIN WHILE STILL IN THE AIR' },
+  { key: 'triple', name: 'TRIPLE JUMP',   label: 'CHAIN ALL THREE SLINGS BEFORE LANDING' },
+];
+let tutIdx = null;   // resolved after sGet is defined; -1 = done
+function tutComplete(key){
+  if (tutIdx === null || tutIdx < 0 || TUT[tutIdx].key !== key) return;
+  parts.push({ x: ball.x, y: ball.y - 100, t: 0, txt: '✓ ' + TUT[tutIdx].name, col: '#7fe3a0' });
+  sfx(660, 990, 0.15, 'sine', 0.2);
+  tutIdx++;
+  if (tutIdx >= TUT.length) {
+    tutIdx = -1;
+    sSet('lp-tut-done', '1');
+    parts.push({ x: ball.x, y: ball.y - 150, t: 0, txt: 'YOU HAVE THE MOVES — CLIMB!', col: '#ffd166' });
+    for (let i = 0; i < 30; i++)
+      confetti.push({ x: ball.x + rnd(-40, 40), y: ball.y - 40, vx: rnd(-450, 450), vy: rnd(-750, -100),
+                      s: rnd(4, 8), t: 0, col: ['#ffd166', '#5fd9e8', '#7fe3a0'][i % 3] });
+    sfx(523, 523, 0.12, 'square', 0.18, 0);
+    sfx(784, 1046, 0.3, 'square', 0.2, 0.14);
+  }
+}
 
 /* Altitude zones: fixed-size chapters. Leaving one is a celebration, and
    each new zone introduces a block type (Doodle Jump's roster, adapted).
@@ -180,6 +212,7 @@ let GROUND_Y = 700;
 let camX = 0, camY = 0, peakY = 700, milestone = 0, jumpsLeft = 3, zoneIdx = 0;
 let panelOpen = false, SIM = false, groundHit = false;
 let parts = [], confetti = [], banner = null, zoneReached = 0, consecSpecial = 0;
+tutIdx = sGet('lp-tut-done') ? -1 : 0;
 const world = { flats:[], coins:[] };
 let cursor = { x: 0, y: 0 }, dir = 1;
 const ball = { x:0, y:0, vx:0, vy:0, trail:[] };
@@ -348,6 +381,7 @@ function step(dt){
         Math.abs(f.y - (ball.y + CFG.ballR)) < 7 && ball.vy >= -20) support = f;
   }
   if (support) {
+    tutComplete('land');
     if (support.type === 'mover' && support.lastDx) ball.x += support.lastDx;   // ride it
     if (support.type === 'crumble' && !support.hitAt) { support.hitAt = tNow; sfx(220, 140, 0.12, 'square', 0.12); }
     if (support.type === 'ghost' && !support.usedAt) support.usedAt = tNow;
@@ -438,6 +472,10 @@ function fire(a){
   jumpsLeft--;
   ball.vx = s.vx; ball.vy = s.vy;
   if (state === S_READY) state = S_PLAY;
+  const used = CFG.jumps - jumpsLeft;
+  if (used === 1) tutComplete('sling');
+  else if (used === 2) tutComplete('double');
+  else if (used === 3) tutComplete('triple');
   const sp = Math.hypot(s.vx, s.vy);
   sfx(200 + Math.min(sp, 3000) * 0.15, 120, 0.09, 'triangle', 0.15);
 }
@@ -723,8 +761,8 @@ function render(t){
 
   if (state === S_READY) {
     txt('LAST PASS', cx, LH * 0.24, 80, '#ffd166', 800);
-    txt('AN ENDLESS CLIMB. THREE SLINGS PER LANDING — EACH AIR SLING WEAKER.', cx, LH * 0.345, 25, '#cfd9ea');
-    txt('NO DEATHS. THE ONLY ENEMY IS THE LONG WAY DOWN.', cx, LH * 0.39, 25, '#cfd9ea');
+    txt('DRAG ANYWHERE TO AIM — THE DOTS SHOW YOUR FLIGHT — RELEASE TO SLING.', cx, LH * 0.345, 25, '#cfd9ea');
+    txt('THREE SLINGS PER LANDING, EACH WEAKER. NO DEATHS — JUST THE LONG WAY DOWN.', cx, LH * 0.39, 25, '#cfd9ea');
     ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 3);
     txt('PULL BACK AND RELEASE TO JUMP', cx, LH * 0.465, 27, '#5fd9e8', 700);
     ctx.globalAlpha = 1;
@@ -740,6 +778,19 @@ function render(t){
           'rgba(143,163,192,0.5)', 600);
     }
     txt('v' + VERSION, 14, LH - 18, 17, 'rgba(143,163,192,0.5)', 600, 'left');
+  }
+  // first-moves tutorial bar
+  if (tutIdx >= 0 && state === S_PLAY) {
+    ctx.fillStyle = 'rgba(6,9,16,0.5)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(cx - LW * 0.32, LH - 76, LW * 0.64, 54, 12);
+    else ctx.rect(cx - LW * 0.32, LH - 76, LW * 0.64, 54);
+    ctx.fill();
+    txt(TUT[tutIdx].name + ' — ' + TUT[tutIdx].label, cx, LH - 55, 22, '#5fd9e8', 700);
+    for (let i = 0; i < TUT.length; i++) {
+      ctx.fillStyle = i < tutIdx ? '#7fe3a0' : i === tutIdx ? '#5fd9e8' : 'rgba(143,163,192,0.3)';
+      ctx.beginPath(); ctx.arc(cx + (i - (TUT.length - 1) / 2) * 22, LH - 33, 4.5, 0, 7); ctx.fill();
+    }
   }
   if (panelOpen) txt('PAUSED — TUNING', cx, 150, 24, '#5fd9e8', 700);
 }
