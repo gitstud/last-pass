@@ -81,6 +81,23 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
 title screen. The full changelog lives behind "What's new" in the ⚙ panel;
 a red dot on the gear marks unseen versions (`lp-seen-ver`).
 
+## Systems added Aug 5 (v0.13)
+
+- **Characters**: CHARS registry — per-character physics overrides via PV(k)
+  (SPIDA: groundFric 14, rollFric .02, cling to |ny|<0.6 surfaces ~3.2s;
+  RUBBA: restitution .68, damping .12). Picker on title screen; locked chars
+  use the test-mode mock purchase (taps counted in `lp-mock-char-buys`,
+  unlocks in `lp-chars`, selection in `lp-char`). SPIDA is Marvel-adjacent
+  trade dress — rename/re-palette before commercial.
+- **Pinball**: paddles are REACTIVE (armed → fire when struck → return →
+  0.35s re-arm). Pop bumpers: fixed 1500 radial kick, flash, coin per ding
+  (max 5 per bumper, 0.25s cooldown). Both zone 3+.
+- **Autosave/continue**: saveGame() on flat-footing (3s throttle) →
+  `lp-save` (full world serialization); CONTINUE/NEW CLIMB on title;
+  orientation flip resumes from save. Restart button clears save.
+- **Redo purchases (mock)**: completing the fake $0.99 purchase mid-fall
+  auto-uses one redo immediately. Tap counts in `lp-mock-buys`.
+
 ## Deployment
 
 **Permanent playtest URL: https://gitstud.github.io/last-pass/** — GitHub
