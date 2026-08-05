@@ -107,8 +107,15 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.10';
+const VERSION = '0.11';
 const CHANGELOG = [
+  { v: '0.11', date: 'Aug 5', title: 'Pinball paddles',
+    highlights: ['NEW: PINBALL PADDLES — SOME FRIENDLY, SOME VICIOUS'],
+    items: [
+      'Pivoting paddles appear from The High Sky up, swiping on their own clock. Brass ones bat you skyward. Steel ones sweep sideways. The pink ones slam DOWN — and the ones with a red pivot swing fast.',
+      'Every paddle glows for a beat before it swipes — that’s your warning.',
+      'A paddle is still a surface: any touch reloads your slings, even a slam.',
+      'Springs got serious: they now launch you higher than a full triple chain, slings loaded. Be happy to see them.' ] },
   { v: '0.10', date: 'Aug 5', title: 'Redo hearts & a pretend store',
     highlights: ['REDO HEARTS ON SCREEN', 'OUT OF REDOS? A (FAKE) $0.99 OFFER — TELL US HOW IT FEELS'],
     items: [
@@ -255,7 +262,7 @@ let lastSafe = { x: 0, y: 0 }, freeRedos = 3, redoPrompt = null, airPrompted = f
 let redoWallet = +(sGet('lp-redo-wallet') || 0), buying = 0;   // wallet persists; buys are TEST MODE (no real charge)
 let timeScale = 1, projT = 0;
 function redoCount(){ return freeRedos + redoWallet; }
-const world = { flats:[], coins:[] };
+const world = { flats:[], coins:[], flippers:[] };
 let cursor = { x: 0, y: 0 }, dir = 1;
 const ball = { x:0, y:0, vx:0, vy:0, trail:[] };
 const aims = new Map();
@@ -352,6 +359,23 @@ function genRun(){
       const wy = cursor.y - rnd(140, 340), wh = rnd(140, 260);
       world.flats.push({ type: 'wall', x: cursor.x + dir * rnd(130, 250), y0: wy - wh, y1: wy });
     }
+    // pinball paddles (zone 3+): pivoting arms that swipe on their own clock.
+    // 'up' bats you skyward; 'side' sweeps overhead; 'down' slams — beware
+    if (zoneAt(a) >= 3 && Math.random() < 0.10) {
+      const roll = Math.random();
+      const kind = roll < 0.45 ? 'up' : roll < 0.75 ? 'side' : 'down';
+      let restA, hitA;
+      if (kind === 'up') { restA = 0.6; hitA = -0.7; }
+      else if (kind === 'down') { restA = -0.6; hitA = 0.7; }
+      else { restA = -Math.PI / 2 - 0.6; hitA = -Math.PI / 2 + 0.6; }
+      const brutal = kind !== 'up' && Math.random() < 0.35;
+      world.flippers.push({
+        px: cursor.x - dx * 0.5 + (Math.random() < 0.5 ? -1 : 1) * rnd(120, 220),
+        py: cursor.y + rise * 0.5 + rnd(-50, 50),
+        m: Math.random() < 0.5 ? 1 : -1,
+        len: rnd(120, 180), restA, hitA, angle: restA,
+        dur: brutal ? 0.09 : 0.14, st: 0, t: rnd(0.5, 3), w: 0, kind, brutal });
+    }
   }
   // wide turn platform: an easy step, a place to breathe, then reverse — always plain
   const rise = TIERS[0] + rnd(-40, 0);
@@ -367,7 +391,7 @@ function ensureWorld(){
 function reset(){
   GROUND_Y = LH - 100;
   world.flats = [{ x0: -1400, x1: 1400, y: GROUND_Y, ground: true }];
-  world.coins = [];
+  world.coins = []; world.flippers = [];
   cursor = { x: 0, y: GROUND_Y }; dir = 1;
   ball.x = 0; ball.y = GROUND_Y - CFG.ballR - 1;
   ball.vx = 0; ball.vy = 0; ball.trail = [];
@@ -454,8 +478,61 @@ function physBall(b, dt){
       collideRect(b, f.x0, f.y, f.x1 - f.x0, 30);
     }
   }
+  for (const fl of world.flippers) {
+    if (Math.abs(b.x - fl.px) > fl.len + 70 || Math.abs(b.y - fl.py) > fl.len + 70) continue;
+    collideFlipper(b, fl);
+  }
   // character-style skid: strong horizontal braking while on a surface
   if (groundHit) b.vx *= Math.exp(-CFG.groundFric * dt);
+}
+
+function updateFlippers(dt){
+  for (const fl of world.flippers) {
+    fl.t -= dt; fl.w = 0;
+    if (fl.st === 0 && fl.t <= 0) { fl.st = 1; fl.t = 0.25; }                 // wind-up: the telegraph
+    else if (fl.st === 1 && fl.t <= 0) { fl.st = 2; fl.t = fl.dur; }
+    else if (fl.st === 2) {                                                    // the swipe
+      const k = Math.max(0, Math.min(1, 1 - fl.t / fl.dur));
+      fl.angle = fl.restA + (fl.hitA - fl.restA) * k;
+      fl.w = (fl.hitA - fl.restA) / fl.dur;
+      if (fl.t <= 0) { fl.st = 3; fl.t = 0.5; }
+    } else if (fl.st === 3) {                                                  // lazy return
+      const k = Math.max(0, Math.min(1, 1 - fl.t / 0.5));
+      fl.angle = fl.hitA + (fl.restA - fl.hitA) * k;
+      fl.w = (fl.restA - fl.hitA) / 0.5;
+      if (fl.t <= 0) { fl.st = 0; fl.t = rnd(1.5, 4); fl.angle = fl.restA; }
+    }
+  }
+}
+function collideFlipper(b, fl){
+  const R = CFG.ballR + 14;
+  const ex = fl.px + fl.m * Math.cos(fl.angle) * fl.len;
+  const ey = fl.py + Math.sin(fl.angle) * fl.len;
+  const dx = ex - fl.px, dy = ey - fl.py, l2 = dx * dx + dy * dy;
+  let tt = l2 ? ((b.x - fl.px) * dx + (b.y - fl.py) * dy) / l2 : 0;
+  tt = Math.max(0.05, Math.min(1, tt));
+  let nx = b.x - (fl.px + dx * tt), ny = b.y - (fl.py + dy * tt);
+  const d = Math.hypot(nx, ny);
+  if (d >= R || d < 1e-6) return;
+  nx /= d; ny /= d;
+  b.x += nx * (R - d); b.y += ny * (R - d);
+  // the arm's surface velocity at the contact point is what bats you
+  const arm = fl.len * tt;
+  const vsx = fl.w * (-fl.m * Math.sin(fl.angle)) * arm;
+  const vsy = fl.w * Math.cos(fl.angle) * arm;
+  const rvx = b.vx - vsx, rvy = b.vy - vsy;
+  const vn = rvx * nx + rvy * ny;
+  if (vn < 0) {
+    b.vx = rvx - 1.75 * vn * nx + vsx;
+    b.vy = rvy - 1.75 * vn * ny + vsy;
+    const sp = Math.hypot(b.vx, b.vy);
+    if (sp > 2600) { b.vx *= 2600 / sp; b.vy *= 2600 / sp; }
+    if (!SIM) {
+      jumpsLeft = CFG.jumps;   // a paddle is still a surface — slings reload
+      sfx(Math.abs(fl.w) > 4 ? 180 : 150, Math.abs(fl.w) > 4 ? 60 : 85,
+          Math.abs(fl.w) > 4 ? 0.12 : 0.05, 'square', Math.abs(fl.w) > 4 ? 0.25 : 0.12);
+    }
+  }
 }
 
 function projectLanding(){   // where does this fall end? (real physics, frozen movers)
@@ -484,6 +561,7 @@ function doRedo(){
 }
 
 function step(dt){
+  updateFlippers(dt);
   physBall(ball, dt);
   if (groundHit) {   // standing on anything: this is your footing, and the fall (if any) is over
     airPrompted = false;
@@ -527,9 +605,9 @@ function step(dt){
     if (support.type === 'ghost' && !support.usedAt) support.usedAt = tNow;
     if (support.type === 'spring' && (!support.sprAt || tNow - support.sprAt > 0.35)) {
       support.sprAt = tNow;
-      ball.vy = -1750;
+      ball.vy = -2500;   // a spring should out-lift your whole triple chain — a gift, not a shrug
       jumpsLeft = CFG.jumps;
-      sfx(300, 900, 0.18, 'triangle', 0.22);
+      sfx(280, 1100, 0.25, 'triangle', 0.26);
     }
   }
   for (const f of world.flats) {
@@ -865,6 +943,27 @@ function render(t){
     ctx.shadowBlur = 0;
     ctx.strokeStyle = '#e09422'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(c.x, c.y + bob, 7.5, 0, 7); ctx.stroke();
+  }
+
+  // pinball paddles
+  for (const fl of world.flippers) {
+    const ex = fl.px + fl.m * Math.cos(fl.angle) * fl.len;
+    const ey = fl.py + Math.sin(fl.angle) * fl.len;
+    if (fl.st === 1) {   // wind-up glow: the fair warning
+      ctx.shadowColor = fl.kind === 'up' ? 'rgba(232,194,104,0.9)' : 'rgba(255,107,129,0.9)';
+      ctx.shadowBlur = 18;
+    }
+    ctx.strokeStyle = fl.kind === 'up' ? '#e8c268' : fl.kind === 'side' ? '#c9ced9' : '#ff6b81';
+    ctx.lineWidth = 26; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(fl.px, fl.py); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.moveTo(fl.px, fl.py); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.fillStyle = fl.brutal ? '#ff5d5d' : '#8fa3c0';
+    ctx.beginPath(); ctx.arc(fl.px, fl.py, 11, 0, 7); ctx.fill();
+    ctx.fillStyle = '#0b0f19';
+    ctx.beginPath(); ctx.arc(fl.px, fl.py, 4.5, 0, 7); ctx.fill();
+    ctx.lineCap = 'butt';
   }
 
   // trail + ball + jump pips
