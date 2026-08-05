@@ -52,6 +52,14 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
    interstitials; (5) NEVER: energy timers, pay-for-power, loss-recovery
    purchases. Sequence: instrument retention first (PM collaborator), ship
    monetization only after D1/D7 proves the loop.
+   REDO economy (candidate, Aug 5): the redo mechanic (undo a >120m fall) ships
+   FREE — 3 per climb — while playtesting. If monetized: sell PACKS (~5/$1) in
+   a calm store moment, never a buy button inside the falling moment (that's
+   the "make you lose on purpose" line). Free 3 refresh every climb; purchased
+   redos are a persistent wallet consumed only after the free ones — packs
+   thus target deep single runs, not everyday play. Max's read: most players
+   just want to climb to pass time — redo packs are minority revenue;
+   cosmetics/content remain the spine.
 6. "Reverse pachinko" is the pitch line. Naming direction: Chinese —
    弹弓 dàngōng ("elastic bow"/slingshot); explore variations.
 
