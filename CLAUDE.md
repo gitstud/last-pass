@@ -48,6 +48,13 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
 6. "Reverse pachinko" is the pitch line. Naming direction: Chinese —
    弹弓 dàngōng ("elastic bow"/slingshot); explore variations.
 
+## Release ritual (standing rule from Max)
+
+**Every deploy**: add a CHANGELOG entry in `index.html` (newest first), bump
+`VERSION`, and curate `highlights` — the short lines playtesters see on the
+title screen. The full changelog lives behind "What's new" in the ⚙ panel;
+a red dot on the gear marks unseen versions (`lp-seen-ver`).
+
 ## Deployment
 
 **Permanent playtest URL: https://gitstud.github.io/last-pass/** — GitHub

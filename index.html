@@ -14,6 +14,24 @@
   #gear { position:fixed; top:10px; right:12px; z-index:20; width:44px; height:44px;
     border:1px solid rgba(255,255,255,.18); border-radius:10px; background:rgba(16,22,35,.7);
     color:#8fa3c0; font-size:22px; line-height:1; cursor:pointer; }
+  #gear .dot { position:absolute; top:5px; right:5px; width:10px; height:10px; border-radius:50%;
+    background:#ff5d5d; display:none; }
+  #gear.unseen .dot { display:block; }
+  #log { position:fixed; inset:0; z-index:30; display:none; overflow-y:auto;
+    background:rgba(11,15,25,.97); color:#cfd9ea; padding:28px 22px 90px;
+    font-family:"Avenir Next Condensed","Arial Narrow",system-ui,sans-serif; }
+  #log.open { display:block; }
+  #log h2 { margin:0 0 18px; font-size:20px; letter-spacing:.14em; text-transform:uppercase; color:#ffd166; }
+  #log .entry { max-width:560px; margin:0 auto 22px; }
+  #log h3 { margin:0 0 2px; font-size:16px; color:#5fd9e8; letter-spacing:.06em; }
+  #log .date { font-size:12px; color:#7d8aa3; margin-bottom:6px; }
+  #log ul { margin:0; padding-left:18px; }
+  #log li { font-size:14px; margin-bottom:4px; line-height:1.35; }
+  #logclose { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:31;
+    padding:10px 34px; font:inherit; font-size:14px; letter-spacing:.1em; text-transform:uppercase;
+    color:#cfd9ea; background:rgba(95,217,232,.15); border:1px solid rgba(95,217,232,.5);
+    border-radius:8px; cursor:pointer; display:none; }
+  #log.open + #logclose { display:block; }
   #gear:focus-visible { outline:2px solid #5fd9e8; }
   #panel { position:fixed; top:0; right:0; bottom:0; z-index:19; width:270px; padding:56px 16px 16px;
     background:rgba(13,18,30,.94); border-left:1px solid rgba(95,217,232,.25); color:#cfd9ea;
@@ -33,13 +51,16 @@
 </style>
 
 <canvas id="c"></canvas>
-<button id="gear" aria-label="Physics tuning">&#9881;&#65039;</button>
+<button id="gear" aria-label="Settings">&#9881;&#65039;<span class="dot"></span></button>
 <div id="panel">
   <h2>Feel</h2>
   <p>Game is paused while tuning. Changes apply instantly.</p>
   <div id="rows"></div>
+  <button id="whatsnew">What's new</button>
   <button id="restart">Restart climb</button>
 </div>
+<div id="log"><h2>Changelog</h2><div id="logbody"></div></div>
+<button id="logclose">Close</button>
 
 <script>
 'use strict';
@@ -83,6 +104,35 @@ const TUNE = [
 ];
 const PULL_MAX = 270;
 const TIERS = [330, 560, 720];
+
+/* Every deploy adds an entry here (newest first) and bumps VERSION.
+   `highlights` is the curated line playtesters see on the title screen. */
+const VERSION = '0.4';
+const CHANGELOG = [
+  { v: '0.4', date: 'Aug 5', title: 'Zones & block types',
+    highlights: ['ZONES EVERY 500m WITH CELEBRATIONS', 'NEW BLOCKS: MOVERS, CRUMBLERS, PHANTOMS, SPRINGS'],
+    items: [
+      'Zones are chapters: crossing a boundary fires confetti, a fanfare, and a banner announcing the zone’s new block.',
+      'Moving platforms (blue) patrol side to side — and you ride them.',
+      'Crumbling platforms (brown) shake for half a second after you land, then collapse. They grow back after a few seconds.',
+      'Phantom platforms (white) vanish 0.6s after first touch — one composed sling each. They also return.',
+      'Spring pads launch you hard, free of charge, slings fully reloaded.',
+      'The big altitude number is now live — it unwinds as you fall. Run peak has its own readout, top right.',
+      'Stars now arrive with the Starfield zone instead of at a hardcoded altitude.' ] },
+  { v: '0.3', date: 'Aug 5', title: 'Permanent home',
+    highlights: [],
+    items: [ 'The game now lives at gitstud.github.io/last-pass — the link is permanent and always current.' ] },
+  { v: '0.2', date: 'Aug 4', title: 'The focused build',
+    highlights: [],
+    items: [
+      'Fresh start around the validated mechanic: three slings per landing, each air sling weaker (80% of the last).',
+      'Platform rises come in three exact tiers: a clean single, a committed double, a crisp triple.',
+      'Character-style skid: horizontal speed dies quickly on the ground.',
+      'Solid ground floor and zero deaths — the only enemy is the long way down.' ] },
+  { v: '0.1', date: 'Aug 2–4', title: 'The exploration era',
+    highlights: [],
+    items: [ 'Thumb-catch pong, slingshot mini golf, an endless climber, a corridor dungeon, and a zigzag tower — five prototypes in three days, distilled into this game.' ] },
+];
 
 /* Altitude zones: fixed-size chapters. Leaving one is a celebration, and
    each new zone introduces a block type (Doodle Jump's roster, adapted).
@@ -675,6 +725,18 @@ function render(t){
     ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 3);
     txt('PULL BACK AND RELEASE TO JUMP', cx, LH * 0.465, 27, '#5fd9e8', 700);
     ctx.globalAlpha = 1;
+    // what's-new callout for playtesters
+    const latest = CHANGELOG[0];
+    if (latest.highlights.length) {
+      const hot = unseenLog;
+      txt('NEW IN v' + latest.v, cx, LH * 0.575, 22, hot ? '#ffd166' : 'rgba(143,163,192,0.75)', 800);
+      for (let i = 0; i < latest.highlights.length; i++)
+        txt(latest.highlights[i], cx, LH * (0.615 + i * 0.038), 20,
+            hot ? 'rgba(255,209,102,0.85)' : 'rgba(143,163,192,0.65)', 600);
+      txt('FULL CHANGELOG IN THE ⚙ MENU', cx, LH * (0.615 + latest.highlights.length * 0.038 + 0.01), 16,
+          'rgba(143,163,192,0.5)', 600);
+    }
+    txt('v' + VERSION, 14, LH - 18, 17, 'rgba(143,163,192,0.5)', 600, 'left');
   }
   if (panelOpen) txt('PAUSED — TUNING', cx, 150, 24, '#5fd9e8', 700);
 }
@@ -717,13 +779,43 @@ for (const [key, label, min, max, stp] of TUNE) {
   rows.append(row);
 }
 const panel = document.getElementById('panel');
-document.getElementById('gear').addEventListener('click', () => {
+const gear = document.getElementById('gear');
+gear.addEventListener('click', () => {
   panelOpen = !panelOpen;
   panel.classList.toggle('open', panelOpen);
 });
 document.getElementById('restart').addEventListener('click', () => {
   reset(); panelOpen = false; panel.classList.remove('open');
 });
+
+/* ---- changelog ---- */
+let unseenLog = sGet('lp-seen-ver') !== VERSION;
+gear.classList.toggle('unseen', unseenLog);
+const logEl = document.getElementById('log'), logBody = document.getElementById('logbody');
+for (const e of CHANGELOG) {
+  const div = document.createElement('div');
+  div.className = 'entry';
+  const h3 = document.createElement('h3');
+  h3.textContent = 'v' + e.v + ' — ' + e.title;
+  const dd = document.createElement('div');
+  dd.className = 'date'; dd.textContent = e.date;
+  const ul = document.createElement('ul');
+  for (const it of e.items) {
+    const li = document.createElement('li');
+    li.textContent = it;
+    ul.append(li);
+  }
+  div.append(h3, dd, ul);
+  logBody.append(div);
+}
+document.getElementById('whatsnew').addEventListener('click', () => {
+  panelOpen = false; panel.classList.remove('open');
+  logEl.classList.add('open');
+  sSet('lp-seen-ver', VERSION);
+  unseenLog = false;
+  gear.classList.remove('unseen');
+});
+document.getElementById('logclose').addEventListener('click', () => logEl.classList.remove('open'));
 
 reset();
 requestAnimationFrame(frame);
