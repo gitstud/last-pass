@@ -512,10 +512,11 @@ function render(t){
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  // HUD
-  const peak = altOf(peakY);
-  txt(peak + 'm', cx, 48, 54, 'rgba(255,255,255,0.92)', 700);
+  // HUD — the big number is where you ARE (it falls with you); peak is the run's score
+  const cur = altOf(ball.y), peak = altOf(peakY);
+  txt(cur + 'm', cx, 48, 54, 'rgba(255,255,255,0.92)', 700);
   txt(ZONES[zoneIdx].name, cx, 88, 22, 'rgba(255,209,102,0.75)', 700);
+  txt('PEAK ' + peak + 'm', LW - 110, 30, 22, 'rgba(143,163,192,0.85)', 600, 'right');
   txt('BEST ' + bestAlt + 'm', 18, 30, 22, 'rgba(143,163,192,0.85)', 600, 'left');
   ctx.fillStyle = '#ffd166';
   ctx.beginPath(); ctx.arc(27, 66, 9, 0, 7); ctx.fill();
