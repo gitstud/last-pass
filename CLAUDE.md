@@ -48,6 +48,13 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
 6. "Reverse pachinko" is the pitch line. Naming direction: Chinese —
    弹弓 dàngōng ("elastic bow"/slingshot); explore variations.
 
+## Deployment
+
+**Permanent playtest URL: https://gitstud.github.io/last-pass/** — GitHub
+Pages off `main` (repo `gitstud/last-pass`). Deploy = `git push` (live in
+~1-2 min). ngrok/LAN serving remain useful for instant-refresh iteration;
+Pages is the link you share.
+
 ## Dev workflow
 
 - Serve locally: no-cache python server on :8000 (see scratchpad `serve.py`
