@@ -107,8 +107,11 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.11';
+const VERSION = '0.11.1';
 const CHANGELOG = [
+  { v: '0.11.1', date: 'Aug 5', title: 'Watch the window close',
+    highlights: [],
+    items: [ 'The redo decision window now visibly drains under the button — cyan while you have time, red when you don’t. Choose faster.' ] },
   { v: '0.11', date: 'Aug 5', title: 'Pinball paddles',
     highlights: ['NEW: PINBALL PADDLES — SOME FRIENDLY, SOME VICIOUS'],
     items: [
@@ -1103,7 +1106,14 @@ function render(t){
       ctx.fill();
       txt(' Pay  ·  5 REDOS — $0.99', cx, by2 + 43, 30, '#0b0f19', 800);
     }
-    txt('OR TAP ANYWHERE ELSE TO RIDE IT OUT', cx, by2 + 122, 20, 'rgba(143,163,192,0.8)', 600);
+    // the decision window, draining before your eyes
+    const limit = redoCount() > 0 && buying <= 0 ? 3 : 4.5;
+    const rem = Math.max(0, 1 - redoPrompt.t / limit);
+    ctx.fillStyle = 'rgba(143,163,192,0.25)';
+    ctx.fillRect(bx2, by2 + 98, bw2, 6);
+    ctx.fillStyle = rem > 0.4 ? '#5fd9e8' : '#ff5d5d';
+    ctx.fillRect(bx2, by2 + 98, bw2 * rem, 6);
+    txt('OR TAP ANYWHERE ELSE TO RIDE IT OUT', cx, by2 + 128, 20, 'rgba(143,163,192,0.8)', 600);
   }
 
   if (banner) {

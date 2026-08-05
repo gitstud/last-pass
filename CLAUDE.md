@@ -52,6 +52,12 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
    interstitials; (5) NEVER: energy timers, pay-for-power, loss-recovery
    purchases. Sequence: instrument retention first (PM collaborator), ship
    monetization only after D1/D7 proves the loop.
+   VALIDATED DESIGN FINDING (Aug 5, Max): the redo prompt's 3s decision window
+   is an anticipated-regret engine — hesitating until it closes carries the
+   fall AND the regret; keep it brutal for SPENDING redos. HARD RULE: never
+   put a countdown on a MONEY decision (that's a pressure sale) — if buying
+   ever goes real, the purchase path must escape the timer (e.g., offer
+   persists briefly after landing).
    REDO economy (candidate, Aug 5): the redo mechanic (undo a >120m fall) ships
    FREE — 3 per climb — while playtesting. If monetized: sell PACKS (~5/$1) in
    a calm store moment, never a buy button inside the falling moment (that's
