@@ -107,8 +107,15 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.6';
+const VERSION = '0.7';
 const CHANGELOG = [
+  { v: '0.7', date: 'Aug 5', title: 'Slopes and wall slabs',
+    highlights: ['NEW: SLOPES IN THE MOON’S REACH', 'WALL SLABS TO KISS MID-AIR — ANY SURFACE RELOADS'],
+    items: [
+      'Sloped platforms arrive in The Moon’s Reach: land on one and you slowly slide toward the low edge — no free rests up there.',
+      'Thin vertical wall slabs float beside the route from The Cloudbank up. Touching any surface reloads your slings — bank off a wall mid-air to extend a chain.',
+      'A new final zone, The Beyond, mixes every block the tower has.',
+      'Tutorial is now three beats: single, double, triple jump.' ] },
   { v: '0.6', date: 'Aug 5', title: 'A tutorial you can actually read',
     highlights: ['BIGGER, CLEARER HOW-TO-PLAY'],
     items: [
@@ -188,10 +195,12 @@ const ZONES = [
   { name: 'THE CLOUDBANK',    top: '#101a2e', bot: '#2c3a57', block: 'crumble' },
   { name: 'THE HIGH SKY',     top: '#0a1226', bot: '#20355e', block: 'ghost' },
   { name: 'THE STARFIELD',    top: '#05070f', bot: '#0e1526', block: 'spring' },
-  { name: "THE MOON'S REACH", top: '#020308', bot: '#090d18', block: null },
+  { name: "THE MOON'S REACH", top: '#020308', bot: '#090d18', block: 'slope' },
+  { name: 'THE BEYOND',       top: '#010204', bot: '#04060c', block: null },
 ];
 const BLOCK_LABEL = { mover: 'MOVING PLATFORMS', crumble: 'CRUMBLING PLATFORMS',
-                      ghost: 'PHANTOM PLATFORMS', spring: 'SPRING PADS' };
+                      ghost: 'PHANTOM PLATFORMS', spring: 'SPRING PADS',
+                      slope: 'SLOPED PLATFORMS' };
 
 /* ================= Canvas / coords ================= */
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -273,6 +282,13 @@ function makePlat(px, py, w, a, forceStatic){
   if (type === 'mover') { f.cxr = px; f.w = w; f.range = rnd(70, 150); f.spd = rnd(0.6, 1.1); f.phase = rnd(0, 6.28); }
   if (type === 'crumble') { f.hitAt = 0; f.fallV = 0; }
   if (type === 'ghost') { f.usedAt = 0; f.fade = 1; }
+  if (type === 'slope') {   // tilted slab: you slide toward the low edge until you act
+    f.tilt = (Math.random() < 0.5 ? 1 : -1) * rnd(0.20, 0.42);
+    const half = Math.max(30, w / 2 - 15);
+    const dy = Math.tan(f.tilt) * half;
+    f.lx = px - half; f.ly = py + dy;
+    f.rx = px + half; f.ry = py - dy;
+  }
   world.flats.push(f);
   return f;
 }
@@ -288,6 +304,11 @@ function genRun(){
     const roll = Math.random();
     if (roll < 0.45) world.coins.push({ x: cursor.x, y: cursor.y - 52, got: false });
     else if (roll < 0.7) coinArcAt(cursor.x - dx / 2, cursor.y + rise / 2 - rnd(0, 50));
+    // vertical wall slabs (zone 2+): thin mid-air surfaces — kiss one to reload your slings
+    if (zoneAt(a) >= 2 && Math.random() < 0.15) {
+      const wy = cursor.y - rnd(140, 340), wh = rnd(140, 260);
+      world.flats.push({ type: 'wall', x: cursor.x + dir * rnd(130, 250), y0: wy - wh, y1: wy });
+    }
   }
   // wide turn platform: an easy step, a place to breathe, then reverse — always plain
   const rise = TIERS[0] + rnd(-40, 0);
@@ -336,6 +357,16 @@ function collideRect(b, rx, ry, rw, rh){
   }
   bounce(b, nxx, nyy, pen);
 }
+function collideCap(b, f){   // ball vs tilted slab (capsule along the slope's spine)
+  const R = CFG.ballR + 15;
+  const dx = f.rx - f.lx, dy = f.ry - f.ly, l2 = dx * dx + dy * dy;
+  let tt = l2 > 0 ? ((b.x - f.lx) * dx + (b.y - f.ly) * dy) / l2 : 0;
+  tt = Math.max(0, Math.min(1, tt));
+  let nx = b.x - (f.lx + dx * tt), ny = b.y - (f.ly + dy * tt);
+  const d = Math.hypot(nx, ny);
+  if (d >= R || d < 1e-6) return;
+  bounce(b, nx / d, ny / d, R - d);
+}
 function bounce(b, nx, ny, pen){
   b.x += nx * pen; b.y += ny * pen;
   if (ny < -0.55) groundHit = true;
@@ -363,6 +394,17 @@ function physBall(b, dt){
         if (f.y <= b.y + r) collideRect(b, b.x - 2000, f.y, 4000, 600);
         continue;
       }
+      if (f.type === 'wall') {
+        if (f.y0 > b.y + r || f.y1 < b.y - r || f.x - 15 > b.x + r || f.x + 15 < b.x - r) continue;
+        collideRect(b, f.x - 15, f.y0, 30, f.y1 - f.y0);
+        continue;
+      }
+      if (f.type === 'slope') {
+        if (Math.min(f.ly, f.ry) - 20 > b.y + r || Math.max(f.ly, f.ry) + 40 < b.y - r ||
+            f.x0 > b.x + r || f.x1 < b.x - r) continue;
+        collideCap(b, f);
+        continue;
+      }
       if (f.y > b.y + r || f.y + 30 < b.y - r || f.x0 > b.x + r || f.x1 < b.x - r) continue;
       collideRect(b, f.x0, f.y, f.x1 - f.x0, 30);
     }
@@ -384,7 +426,7 @@ function step(dt){
       f.lastDx = nx0 - f.x0;
       f.x0 = nx0; f.x1 = nx0 + f.w;
     }
-    if (!support && !f.ground && !f.solidOff &&
+    if (!support && !f.ground && !f.solidOff && f.type !== 'slope' && f.type !== 'wall' &&
         ball.x > f.x0 - CFG.ballR * 0.6 && ball.x < f.x1 + CFG.ballR * 0.6 &&
         Math.abs(f.y - (ball.y + CFG.ballR)) < 7 && ball.vy >= -20) support = f;
   }
@@ -637,6 +679,31 @@ function render(t){
       continue;
     }
     ctx.save();
+    if (f.type === 'wall') {
+      ctx.fillStyle = checkerPat;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(f.x - 15, f.y0, 30, f.y1 - f.y0, 12);
+      else ctx.rect(f.x - 15, f.y0, 30, f.y1 - f.y0);
+      ctx.fill();
+      ctx.strokeStyle = '#b06a4b'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(f.x - 12, f.y0 + 8); ctx.lineTo(f.x - 12, f.y1 - 8); ctx.stroke();
+      ctx.restore();
+      continue;
+    }
+    if (f.type === 'slope') {
+      const ang = Math.atan2(f.ry - f.ly, f.rx - f.lx);
+      const len = Math.hypot(f.rx - f.lx, f.ry - f.ly) + 30;
+      ctx.translate((f.lx + f.rx) / 2, (f.ly + f.ry) / 2);
+      ctx.rotate(ang);
+      ctx.fillStyle = checkerPat;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-len / 2, -15, len, 30, 12); else ctx.rect(-len / 2, -15, len, 30);
+      ctx.fill();
+      ctx.strokeStyle = '#d98f4f'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(-len / 2 + 8, -12); ctx.lineTo(len / 2 - 8, -12); ctx.stroke();
+      ctx.restore();
+      continue;
+    }
     if (f.type === 'crumble' && f.hitAt && !f.falling) ctx.translate(Math.sin(t * 60) * 3, 0);
     const slab = () => {
       ctx.beginPath();
