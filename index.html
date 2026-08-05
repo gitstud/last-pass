@@ -107,8 +107,14 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.9';
+const VERSION = '0.10';
 const CHANGELOG = [
+  { v: '0.10', date: 'Aug 5', title: 'Redo hearts & a pretend store',
+    highlights: ['REDO HEARTS ON SCREEN', 'OUT OF REDOS? A (FAKE) $0.99 OFFER — TELL US HOW IT FEELS'],
+    items: [
+      'Your redos are now hearts in the top corner — three per climb, plus any pack redos you hold.',
+      'Out of redos during a big fall? The slow-motion moment now shows a purchase offer instead.',
+      'IT IS NOT REAL: tapping it charges nothing and grants the 5 redos with a test-mode note. We want to know how that moment feels — would you have paid? Tell Max.' ] },
   { v: '0.9', date: 'Aug 5', title: 'The redo moment',
     highlights: ['NEW: REDO — UNDO A CATASTROPHIC FALL, 3 PER CLIMB'],
     items: [
@@ -245,8 +251,10 @@ tutIdx = sGet('lp-tut-done') ? -1 : 0;
 /* Redo: when you're helpless (no slings, falling) and the projected landing
    costs real progress, time slows and you may undo back to your last footing.
    3 free per climb. Deliberately NOT monetized during playtesting. */
-let lastSafe = { x: 0, y: 0 }, redosLeft = 3, redoPrompt = null, airPrompted = false;
+let lastSafe = { x: 0, y: 0 }, freeRedos = 3, redoPrompt = null, airPrompted = false;
+let redoWallet = +(sGet('lp-redo-wallet') || 0), buying = 0;   // wallet persists; buys are TEST MODE (no real charge)
 let timeScale = 1, projT = 0;
+function redoCount(){ return freeRedos + redoWallet; }
 const world = { flats:[], coins:[] };
 let cursor = { x: 0, y: 0 }, dir = 1;
 const ball = { x:0, y:0, vx:0, vy:0, trail:[] };
@@ -366,8 +374,8 @@ function reset(){
   camX = ball.x - LW / 2; camY = ball.y - LH * 0.55;
   peakY = ball.y; milestone = 0; zoneIdx = 0; zoneReached = 0; jumpsLeft = CFG.jumps;
   consecSpecial = 0; confetti = []; banner = null;
-  lastSafe = { x: ball.x, y: ball.y }; redosLeft = 3; redoPrompt = null;
-  airPrompted = false; timeScale = 1; projT = 0;
+  lastSafe = { x: ball.x, y: ball.y }; freeRedos = 3; redoPrompt = null;
+  airPrompted = false; timeScale = 1; projT = 0; buying = 0;
   aims.clear(); parts = [];
   state = S_READY;
   ensureWorld();
@@ -464,7 +472,9 @@ function projectLanding(){   // where does this fall end? (real physics, frozen 
 }
 function closePrompt(){ redoPrompt = null; timeScale = 1; }
 function doRedo(){
-  redosLeft--;
+  if (redoCount() <= 0) return;
+  if (freeRedos > 0) freeRedos--;
+  else { redoWallet--; sSet('lp-redo-wallet', redoWallet); }
   ball.x = lastSafe.x; ball.y = lastSafe.y - 1;
   ball.vx = 0; ball.vy = 0; ball.trail = [];
   jumpsLeft = CFG.jumps;
@@ -481,7 +491,7 @@ function step(dt){
     if (redoPrompt) closePrompt();
   }
   // helpless + falling + expensive projected landing -> offer the redo
-  if (state === S_PLAY && !redoPrompt && !airPrompted && redosLeft > 0 &&
+  if (state === S_PLAY && !redoPrompt && !airPrompted &&
       jumpsLeft <= 0 && ball.vy > 320) {
     projT += dt;
     if (projT > 0.2) {
@@ -644,8 +654,18 @@ function sfx(f0, f1, dur, type, vol, delay){
 function onStart(id, x, y){
   ensureAudio();
   if (redoPrompt) {
+    if (buying > 0) return;   // mid "purchase": ignore taps
     const bw2 = Math.min(LW * 0.7, 520), bx2 = cx - bw2 / 2, by2 = LH * 0.40;
-    if (x > bx2 && x < bx2 + bw2 && y > by2 && y < by2 + 86) { doRedo(); return; }
+    if (x > bx2 && x < bx2 + bw2 && y > by2 && y < by2 + 86) {
+      if (redoCount() > 0) doRedo();
+      else {   // TEST-MODE purchase: count the tap, fake the processing, grant the pack
+        sSet('lp-mock-buys', (+(sGet('lp-mock-buys') || 0)) + 1);
+        buying = 0.9;
+        redoPrompt.t = 0;
+        sfx(600, 800, 0.08, 'sine', 0.12);
+      }
+      return;
+    }
     closePrompt();   // riding it out — and the drag they just started can still aim a landing
   }
   aims.set(id, { ax: x, ay: y, x, y });
@@ -911,7 +931,23 @@ function render(t){
   txt(cur + 'm', cx, 48, 54, 'rgba(255,255,255,0.92)', 700);
   txt(ZONES[zoneIdx].name, cx, 88, 22, 'rgba(255,209,102,0.75)', 700);
   txt('PEAK ' + peak + 'm', LW - 110, 30, 22, 'rgba(143,163,192,0.85)', 600, 'right');
-  if (state === S_PLAY) txt('↺ ' + redosLeft, LW - 110, 58, 22, 'rgba(95,217,232,0.8)', 700, 'right');
+  if (state === S_PLAY) {   // redo hearts: your undo lives
+    for (let i = 0; i < 3; i++) {
+      const hx = LW - 172 + i * 26, hy = 58, s = 9;
+      const on = i < freeRedos;
+      ctx.fillStyle = on ? '#ff6b81' : 'rgba(255,107,129,0.18)';
+      ctx.strokeStyle = 'rgba(255,107,129,0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hx, hy + s * 0.9);
+      ctx.bezierCurveTo(hx - s * 1.1, hy + s * 0.2, hx - s * 0.55, hy - s * 0.7, hx, hy - s * 0.15);
+      ctx.bezierCurveTo(hx + s * 0.55, hy - s * 0.7, hx + s * 1.1, hy + s * 0.2, hx, hy + s * 0.9);
+      ctx.closePath();
+      ctx.fill();
+      if (!on) ctx.stroke();
+    }
+    if (redoWallet > 0) txt('+' + redoWallet, LW - 138, 58, 20, '#ff6b81', 700, 'left');
+  }
   txt('BEST ' + bestAlt + 'm', 18, 30, 22, 'rgba(143,163,192,0.85)', 600, 'left');
   ctx.fillStyle = '#ffd166';
   ctx.beginPath(); ctx.arc(27, 66, 9, 0, 7); ctx.fill();
@@ -951,12 +987,23 @@ function render(t){
     txt('BIG FALL INCOMING', cx, LH * 0.26, 54, '#ff5d5d', 800);
     txt('YOU’RE ABOUT TO DROP ~' + redoPrompt.lossM + 'm', cx, LH * 0.33, 28, '#e6ecf5', 600);
     const bw2 = Math.min(LW * 0.7, 520), bx2 = cx - bw2 / 2, by2 = LH * 0.40;
-    ctx.fillStyle = 'rgba(95,217,232,0.18)';
-    ctx.strokeStyle = '#5fd9e8'; ctx.lineWidth = 3;
+    const total = redoCount();
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(bx2, by2, bw2, 86, 16); else ctx.rect(bx2, by2, bw2, 86);
-    ctx.fill(); ctx.stroke();
-    txt('REDO LAST JUMP  (' + redosLeft + ' LEFT)', cx, by2 + 43, 30, '#5fd9e8', 800);
+    if (buying > 0) {
+      ctx.fillStyle = 'rgba(230,236,245,0.25)';
+      ctx.fill();
+      txt('PROCESSING…', cx, by2 + 43, 28, '#e6ecf5', 800);
+    } else if (total > 0) {
+      ctx.fillStyle = 'rgba(95,217,232,0.18)';
+      ctx.strokeStyle = '#5fd9e8'; ctx.lineWidth = 3;
+      ctx.fill(); ctx.stroke();
+      txt('REDO LAST JUMP  (' + total + ' LEFT)', cx, by2 + 43, 30, '#5fd9e8', 800);
+    } else {
+      ctx.fillStyle = '#f4f6fa';
+      ctx.fill();
+      txt(' Pay  ·  5 REDOS — $0.99', cx, by2 + 43, 30, '#0b0f19', 800);
+    }
     txt('OR TAP ANYWHERE ELSE TO RIDE IT OUT', cx, by2 + 122, 20, 'rgba(143,163,192,0.8)', 600);
   }
 
@@ -1023,7 +1070,18 @@ function frame(now){
   if (dt > 0.05) dt = 0.05;
   const rdt = dt;
   dt *= timeScale;   // the redo moment plays out in slow motion
-  if (redoPrompt && (redoPrompt.t += rdt) > 3) closePrompt();
+  if (redoPrompt && (redoPrompt.t += rdt) > (redoCount() > 0 && buying <= 0 ? 3 : 4.5)) closePrompt();
+  if (buying > 0) {
+    buying -= rdt;
+    if (buying <= 0) {
+      buying = 0;
+      redoWallet += 5;
+      sSet('lp-redo-wallet', redoWallet);
+      if (redoPrompt) redoPrompt.t = 0;
+      parts.push({ x: ball.x, y: ball.y - 90, t: 0, txt: '+5 REDOS (TEST — NO CHARGE)', col: '#7fe3a0' });
+      sfx(523, 1046, 0.25, 'sine', 0.2);
+    }
+  }
   if (orientFlip) { orientFlip = false; reset(); }
   if (!panelOpen) {
     acc += dt;
