@@ -107,8 +107,11 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.11.2';
+const VERSION = '0.11.3';
 const CHANGELOG = [
+  { v: '0.11.3', date: 'Aug 5', title: 'Redo lands you somewhere solid',
+    highlights: [],
+    items: [ 'Redo now returns you to your last FLAT, permanent platform (or the ground) — never a slope, mover, crumbler, or phantom. No more rewinding into a second accident.' ] },
   { v: '0.11.2', date: 'Aug 5', title: 'No stopping the clock',
     highlights: [],
     items: [ 'Pausing during the redo window now forfeits the offer — the decision only exists in real time. (Slow motion is already your thinking time.)' ] },
@@ -569,9 +572,10 @@ function doRedo(){
 function step(dt){
   updateFlippers(dt);
   physBall(ball, dt);
-  if (groundHit) {   // standing on anything: this is your footing, and the fall (if any) is over
+  if (groundHit) {   // touching down ends the fall — but only FLAT, PERMANENT footing anchors a redo
     airPrompted = false;
-    if (ball.vy > -50) lastSafe = { x: ball.x, y: ball.y };
+    if (Math.abs(ball.y - (GROUND_Y - CFG.ballR)) < 10 && Math.abs(ball.vy) < 80)
+      lastSafe = { x: ball.x, y: ball.y };   // the ground itself is always safe
     if (redoPrompt) closePrompt();
   }
   // helpless + falling + expensive projected landing -> offer the redo
@@ -606,6 +610,11 @@ function step(dt){
   }
   if (support) {
     tutComplete('single');
+    // redo anchors: static platforms and spring decks only — never slopes,
+    // movers, crumblers, or phantoms (returning to those is a second accident)
+    if (support.type === 'static' || support.type === 'spring')
+      lastSafe = { x: Math.max(support.x0 + CFG.ballR, Math.min(support.x1 - CFG.ballR, ball.x)),
+                   y: support.y - CFG.ballR - 1 };
     if (support.type === 'mover' && support.lastDx) ball.x += support.lastDx;   // ride it
     if (support.type === 'crumble' && !support.hitAt) { support.hitAt = tNow; sfx(220, 140, 0.12, 'square', 0.12); }
     if (support.type === 'ghost' && !support.usedAt) support.usedAt = tNow;
