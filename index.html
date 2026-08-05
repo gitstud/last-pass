@@ -88,7 +88,7 @@ const TIERS = [330, 560, 720];
    each new zone introduces a block type (Doodle Jump's roster, adapted).
    Max spec'd ~3000m zones — running 1500 while the block variety is
    validated; this constant is the only thing to change back. */
-const ZONE_M = 1500;
+const ZONE_M = 500;   // validation size — Max's target is ~3000 once block variety is proven
 const ZONES = [
   { name: 'THE COURTYARD',    top: '#0d1220', bot: '#18202f', block: null },
   { name: 'THE RAMPARTS',     top: '#0e1224', bot: '#1c2338', block: 'mover' },
@@ -496,8 +496,8 @@ function render(t){
   sky.addColorStop(1, lerpHex(ZONES[zi].bot, zn.bot, zt));
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, LW, LH);
-  // stars fade in above the cloudbank
-  const starA = Math.max(0, Math.min(0.9, (a - 400) / 500));
+  // stars fade in approaching the Starfield zone, whatever size zones are
+  const starA = Math.max(0, Math.min(0.9, (a - 3.4 * ZONE_M) / (1.2 * ZONE_M)));
   if (starA > 0) {
     ctx.fillStyle = 'rgba(255,255,255,' + (0.7 * starA) + ')';
     for (let k = 0; k < 70; k++) {
