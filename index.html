@@ -105,10 +105,40 @@ const TUNE = [
 const PULL_MAX = 270;
 const TIERS = [330, 560, 720];
 
+/* Characters: each ball is a different physics, not just a paint job.
+   mods override CFG keys; 'cling' sticks to vertical surfaces.
+   (IP note: SPIDA's name/colors are placeholder trade dress — rename and
+   re-palette before anything commercial.) */
+const CHARS = {
+  classic: { name: 'CLASSIC', price: 0,
+    hi: '#fff3d0', mid: '#ffd166', lo: '#e09422', glow: 'rgba(255,200,80,0.75)', mods: {} },
+  spida:   { name: 'SPIDA', price: 1.99,
+    hi: '#ff8a80', mid: '#e0312e', lo: '#8f1310', glow: 'rgba(224,49,46,0.75)', web: '#3a5bd9',
+    mods: { groundFric: 14, rollFric: 0.02, cling: true } },
+  rubba:   { name: 'RUBBA', price: 1.99,
+    hi: '#d6ffe3', mid: '#7fe3a0', lo: '#2e9e63', glow: 'rgba(127,227,160,0.7)',
+    mods: { restitution: 0.68, damping: 0.12 } },
+};
+let curChar = sGet('lp-char') || 'classic';
+let unlockedChars;
+try { unlockedChars = new Set(JSON.parse(sGet('lp-chars') || '["classic"]')); }
+catch(e){ unlockedChars = new Set(['classic']); }
+if (!CHARS[curChar] || !unlockedChars.has(curChar)) curChar = 'classic';
+let charBuying = null;
+function PV(k){ const m = CHARS[curChar].mods; return m && (k in m) ? m[k] : CFG[k]; }
+
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.12';
+const VERSION = '0.13';
 const CHANGELOG = [
+  { v: '0.13', date: 'Aug 5', title: 'The arcade update',
+    highlights: ['PICK YOUR BALL: CLASSIC · SPIDA · RUBBA', 'PADDLES NOW FIRE WHEN STRUCK + POP BUMPERS', 'AUTOSAVE — CONTINUE YOUR CLIMB ANYTIME'],
+    items: [
+      'Characters! Pick your ball on the title screen. SPIDA is sticky — barely rolls, and clings to walls for ~3 seconds when it hits them. RUBBA is bouncy rubber. Locked characters show a test-mode unlock (no real charge — tell Max if you’d pay).',
+      'Paddles reworked: no more random flips — they rest armed and FIRE the instant you strike them, true pinball style.',
+      'Pop bumpers: white-domed, red-ringed, and they DING you away hard. Each pays out a few coins.',
+      'Your climb autosaves whenever you land on flat footing. Come back later and CONTINUE from the title screen.',
+      'Buying redos mid-fall now rescues you automatically — no second tap.' ] },
   { v: '0.12', date: 'Aug 5', title: 'The sky never stops',
     highlights: ['PAST THE BEYOND, THE SKY KEEPS DRIFTING — FOREVER', 'REDOS ONLY OFFERED ABOVE 300m'],
     items: [
@@ -273,10 +303,11 @@ tutIdx = sGet('lp-tut-done') ? -1 : 0;
    costs real progress, time slows and you may undo back to your last footing.
    3 free per climb. Deliberately NOT monetized during playtesting. */
 let lastSafe = { x: 0, y: 0 }, freeRedos = 3, redoPrompt = null, airPrompted = false;
+let hasSave = false, saveAltLabel = 0, lastSaveT = 0, safePending = false;
 let redoWallet = +(sGet('lp-redo-wallet') || 0), buying = 0;   // wallet persists; buys are TEST MODE (no real charge)
 let timeScale = 1, projT = 0;
 function redoCount(){ return freeRedos + redoWallet; }
-const world = { flats:[], coins:[], flippers:[] };
+const world = { flats:[], coins:[], flippers:[], bumpers:[] };
 let cursor = { x: 0, y: 0 }, dir = 1;
 const ball = { x:0, y:0, vx:0, vy:0, trail:[] };
 const aims = new Map();
@@ -388,7 +419,13 @@ function genRun(){
         py: cursor.y + rise * 0.5 + rnd(-50, 50),
         m: Math.random() < 0.5 ? 1 : -1,
         len: rnd(120, 180), restA, hitA, angle: restA,
-        dur: brutal ? 0.09 : 0.14, st: 0, t: rnd(0.5, 3), w: 0, kind, brutal });
+        dur: brutal ? 0.09 : 0.14, st: 0, t: 0, w: 0, kind, brutal });
+    }
+    // pop bumpers (zone 3+): round kickers straight off the old pinball table
+    if (zoneAt(a) >= 3 && Math.random() < 0.08) {
+      world.bumpers.push({ x: cursor.x - dx * 0.5 + (Math.random() < 0.5 ? -1 : 1) * rnd(80, 200),
+                           y: cursor.y + rise * 0.5 + rnd(-60, 60), r: rnd(30, 42),
+                           flash: 0, paid: 0, cd: 0 });
     }
   }
   // wide turn platform: an easy step, a place to breathe, then reverse — always plain
@@ -405,10 +442,10 @@ function ensureWorld(){
 function reset(){
   GROUND_Y = LH - 100;
   world.flats = [{ x0: -1400, x1: 1400, y: GROUND_Y, ground: true }];
-  world.coins = []; world.flippers = [];
+  world.coins = []; world.flippers = []; world.bumpers = [];
   cursor = { x: 0, y: GROUND_Y }; dir = 1;
   ball.x = 0; ball.y = GROUND_Y - CFG.ballR - 1;
-  ball.vx = 0; ball.vy = 0; ball.trail = [];
+  ball.vx = 0; ball.vy = 0; ball.trail = []; ball.clung = false;
   camX = ball.x - LW / 2; camY = ball.y - LH * 0.55;
   peakY = ball.y; milestone = 0; zoneIdx = 0; zoneReached = 0; jumpsLeft = CFG.jumps;
   consecSpecial = 0; confetti = []; banner = null;
@@ -418,6 +455,42 @@ function reset(){
   state = S_READY;
   ensureWorld();
 }
+
+/* ================= Save / continue =================
+   Autosaves whenever you gain flat footing (throttled). Resume from the
+   title screen — pick up the climb exactly where you left it. */
+function saveGame(){
+  try {
+    sSet('lp-save', JSON.stringify({ v: 1, groundY: GROUND_Y, alt: altOf(ball.y),
+      flats: world.flats, coins: world.coins, flippers: world.flippers, bumpers: world.bumpers,
+      cursor, dir, consec: consecSpecial, zoneReached, milestone,
+      ball: { x: ball.x, y: ball.y }, peakY, lastSafe, freeRedos }));
+  } catch(e){}
+}
+function loadGame(){
+  try {
+    const s = JSON.parse(sGet('lp-save'));
+    if (!s || s.v !== 1) return false;
+    GROUND_Y = s.groundY;
+    world.flats = s.flats; world.coins = s.coins;
+    world.flippers = s.flippers || []; world.bumpers = s.bumpers || [];
+    cursor = s.cursor; dir = s.dir; consecSpecial = s.consec || 0;
+    zoneReached = s.zoneReached || 0; milestone = s.milestone || 0;
+    ball.x = s.ball.x; ball.y = s.ball.y; ball.vx = 0; ball.vy = 0;
+    ball.trail = []; ball.clung = false;
+    peakY = s.peakY; lastSafe = s.lastSafe;
+    freeRedos = s.freeRedos != null ? s.freeRedos : 3;
+    camX = ball.x - LW / 2; camY = ball.y - LH * 0.55;
+    jumpsLeft = CFG.jumps; aims.clear(); parts = []; confetti = []; banner = null;
+    redoPrompt = null; airPrompted = false; timeScale = 1; buying = 0;
+    zoneIdx = zoneAt(altOf(ball.y));
+    hasSave = false;
+    state = S_PLAY;
+    ensureWorld();
+    return true;
+  } catch(e){ return false; }
+}
+function clearSave(){ try { localStorage.removeItem('lp-save'); } catch(e){} }
 
 /* ================= Physics ================= */
 function collideRect(b, rx, ry, rw, rh){
@@ -454,19 +527,28 @@ function bounce(b, nx, ny, pen){
   b.x += nx * pen; b.y += ny * pen;
   if (ny < -0.55) groundHit = true;
   if (!SIM) jumpsLeft = CFG.jumps;   // touching anything reloads
+  if (!SIM && b === ball && PV('cling') && Math.abs(ny) < 0.6) {   // sticky characters latch onto walls
+    ball.clung = true; ball.clingT = 0;
+    b.vx = 0; b.vy = 0;
+  }
   const vn = b.vx * nx + b.vy * ny;
   if (vn < 0) {
     let tvx = b.vx - vn * nx, tvy = b.vy - vn * ny;
-    tvx *= 1 - CFG.rollFric; tvy *= 1 - CFG.rollFric;
-    const bn = -vn * CFG.restitution;
+    tvx *= 1 - PV('rollFric'); tvy *= 1 - PV('rollFric');
+    const bn = -vn * PV('restitution');
     b.vx = tvx + nx * bn; b.vy = tvy + ny * bn;
     if (-vn > 300) sfx(150, 85, 0.05, 'square', Math.min(0.18, -vn / 9000));
   }
 }
 function physBall(b, dt){
   const r = CFG.ballR;
-  b.vy += CFG.gravity * dt;
-  const dmp = Math.exp(-CFG.damping * dt);
+  if (!SIM && b === ball && ball.clung) {   // hanging on: grip lasts ~3s, then gives out
+    ball.clingT += dt;
+    if (ball.clingT < 3.2) { b.vx = 0; b.vy = 0; b.y += 14 * dt; groundHit = false; return; }
+    ball.clung = false;
+  }
+  b.vy += PV('gravity') * dt;
+  const dmp = Math.exp(-PV('damping') * dt);
   b.vx *= dmp; b.vy *= dmp;
   b.x += b.vx * dt; b.y += b.vy * dt;
   groundHit = false;
@@ -496,25 +578,53 @@ function physBall(b, dt){
     if (Math.abs(b.x - fl.px) > fl.len + 70 || Math.abs(b.y - fl.py) > fl.len + 70) continue;
     collideFlipper(b, fl);
   }
+  for (const bp of world.bumpers) {
+    const R = CFG.ballR + bp.r;
+    const dxB = b.x - bp.x, dyB = b.y - bp.y;
+    if (Math.abs(dxB) > R || Math.abs(dyB) > R) continue;
+    const d = Math.hypot(dxB, dyB);
+    if (d >= R || d < 1e-6) continue;
+    const nx = dxB / d, ny = dyB / d;
+    b.x = bp.x + nx * R; b.y = bp.y + ny * R;
+    const dot = b.vx * nx + b.vy * ny;
+    b.vx = (b.vx - dot * nx) * 0.4 + nx * 1500;   // the DING: a fixed hard kick outward
+    b.vy = (b.vy - dot * ny) * 0.4 + ny * 1500;
+    if (!SIM) {
+      jumpsLeft = CFG.jumps;
+      bp.flash = 1;
+      if (bp.cd <= 0) {
+        bp.cd = 0.25;
+        if (bp.paid < 5) {
+          bp.paid++; coinsT++; sSet('lp-coins', coinsT);
+          parts.push({ x: bp.x, y: bp.y - bp.r - 20, t: 0, txt: '+1', col: '#ffd166' });
+        }
+        sfx(950, 1500, 0.07, 'square', 0.22);
+      }
+    }
+  }
   // character-style skid: strong horizontal braking while on a surface
-  if (groundHit) b.vx *= Math.exp(-CFG.groundFric * dt);
+  if (groundHit) b.vx *= Math.exp(-PV('groundFric') * dt);
 }
 
 function updateFlippers(dt){
+  // pinball rules: a paddle rests armed and FIRES when the ball strikes it
   for (const fl of world.flippers) {
-    fl.t -= dt; fl.w = 0;
-    if (fl.st === 0 && fl.t <= 0) { fl.st = 1; fl.t = 0.25; }                 // wind-up: the telegraph
-    else if (fl.st === 1 && fl.t <= 0) { fl.st = 2; fl.t = fl.dur; }
-    else if (fl.st === 2) {                                                    // the swipe
+    fl.w = 0;
+    if (fl.st === 2) {                                       // the flip
+      fl.t -= dt;
       const k = Math.max(0, Math.min(1, 1 - fl.t / fl.dur));
       fl.angle = fl.restA + (fl.hitA - fl.restA) * k;
       fl.w = (fl.hitA - fl.restA) / fl.dur;
-      if (fl.t <= 0) { fl.st = 3; fl.t = 0.5; }
-    } else if (fl.st === 3) {                                                  // lazy return
-      const k = Math.max(0, Math.min(1, 1 - fl.t / 0.5));
+      if (fl.t <= 0) { fl.st = 3; fl.t = 0.45; }
+    } else if (fl.st === 3) {                                // return
+      fl.t -= dt;
+      const k = Math.max(0, Math.min(1, 1 - fl.t / 0.45));
       fl.angle = fl.hitA + (fl.restA - fl.hitA) * k;
-      fl.w = (fl.restA - fl.hitA) / 0.5;
-      if (fl.t <= 0) { fl.st = 0; fl.t = rnd(1.5, 4); fl.angle = fl.restA; }
+      fl.w = (fl.restA - fl.hitA) / 0.45;
+      if (fl.t <= 0) { fl.st = 4; fl.t = 0.35; fl.angle = fl.restA; }
+    } else if (fl.st === 4) {                                // brief re-arm
+      fl.t -= dt;
+      if (fl.t <= 0) fl.st = 0;
     }
   }
 }
@@ -530,6 +640,10 @@ function collideFlipper(b, fl){
   if (d >= R || d < 1e-6) return;
   nx /= d; ny /= d;
   b.x += nx * (R - d); b.y += ny * (R - d);
+  if (!SIM && fl.st === 0) {   // struck while armed: FIRE
+    fl.st = 2; fl.t = fl.dur;
+    fl.w = (fl.hitA - fl.restA) / fl.dur;
+  }
   // the arm's surface velocity at the contact point is what bats you
   const arm = fl.len * tt;
   const vsx = fl.w * (-fl.m * Math.sin(fl.angle)) * arm;
@@ -576,11 +690,14 @@ function doRedo(){
 
 function step(dt){
   updateFlippers(dt);
+  for (const bp of world.bumpers) { bp.cd -= dt; if (bp.flash > 0) bp.flash = Math.max(0, bp.flash - dt * 5); }
   physBall(ball, dt);
   if (groundHit) {   // touching down ends the fall — but only FLAT, PERMANENT footing anchors a redo
     airPrompted = false;
-    if (Math.abs(ball.y - (GROUND_Y - CFG.ballR)) < 10 && Math.abs(ball.vy) < 80)
+    if (Math.abs(ball.y - (GROUND_Y - CFG.ballR)) < 10 && Math.abs(ball.vy) < 80) {
       lastSafe = { x: ball.x, y: ball.y };   // the ground itself is always safe
+      safePending = true;
+    }
     if (redoPrompt) closePrompt();
   }
   // helpless + falling + expensive projected landing -> offer the redo
@@ -617,9 +734,11 @@ function step(dt){
     tutComplete('single');
     // redo anchors: static platforms and spring decks only — never slopes,
     // movers, crumblers, or phantoms (returning to those is a second accident)
-    if (support.type === 'static' || support.type === 'spring')
+    if (support.type === 'static' || support.type === 'spring') {
       lastSafe = { x: Math.max(support.x0 + CFG.ballR, Math.min(support.x1 - CFG.ballR, ball.x)),
                    y: support.y - CFG.ballR - 1 };
+      safePending = true;
+    }
     if (support.type === 'mover' && support.lastDx) ball.x += support.lastDx;   // ride it
     if (support.type === 'crumble' && !support.hitAt) { support.hitAt = tNow; sfx(220, 140, 0.12, 'square', 0.12); }
     if (support.type === 'ghost' && !support.usedAt) support.usedAt = tNow;
@@ -685,6 +804,13 @@ function step(dt){
     parts.push({ x: c.x, y: c.y, t: 0, txt: '+1', col: '#ffd166' });
     sfx(880, 1420, 0.09, 'sine', 0.14);
   }
+
+  // autosave on fresh flat footing, throttled
+  if (safePending && state === S_PLAY && performance.now() - lastSaveT > 3000) {
+    safePending = false;
+    lastSaveT = performance.now();
+    saveGame();
+  }
 }
 
 /* ================= Slingshot input ================= */
@@ -695,7 +821,7 @@ function pullOf(a){
   const pull = Math.min(d, PULL_MAX);
   const used = Math.max(0, CFG.jumps - jumpsLeft);
   const mult = Math.pow(CFG.airDecay, used);
-  const sp = Math.min(pull * CFG.slingPower, CFG.maxThrow) * mult;
+  const sp = Math.min(pull * PV('slingPower'), PV('maxThrow')) * mult;
   return { hx: ball.x - dx / d * pull, hy: ball.y - dy / d * pull,
            vx: dx / d * sp, vy: dy / d * sp };
 }
@@ -708,6 +834,7 @@ function fire(a){
     return;
   }
   jumpsLeft--;
+  ball.clung = false;
   ball.vx = s.vx; ball.vy = s.vy;
   if (state === S_READY) state = S_PLAY;
   const used = CFG.jumps - jumpsLeft;
@@ -751,6 +878,32 @@ function sfx(f0, f1, dur, type, vol, delay){
 
 function onStart(id, x, y){
   ensureAudio();
+  if (state === S_READY) {
+    // character picker
+    const ids = Object.keys(CHARS);
+    for (let i = 0; i < ids.length; i++) {
+      const ox = cx + (i - (ids.length - 1) / 2) * 150, oy = LH * 0.80;
+      if (Math.hypot(x - ox, y - oy) < 46) {
+        const cid = ids[i];
+        if (unlockedChars.has(cid)) {
+          curChar = cid; sSet('lp-char', cid);
+          sfx(500, 700, 0.08, 'sine', 0.12);
+        } else if (!charBuying) {   // TEST-MODE unlock: count the tap, fake the processing
+          sSet('lp-mock-char-buys', (+(sGet('lp-mock-char-buys') || 0)) + 1);
+          charBuying = { id: cid, t: 0.9 };
+          sfx(600, 800, 0.08, 'sine', 0.12);
+        }
+        return;
+      }
+    }
+    if (hasSave) {
+      const cw = 380, cxr = cx - cw / 2, cy0 = LH * 0.485;
+      if (x > cxr && x < cxr + cw && y > cy0 && y < cy0 + 64) { if (!loadGame()) hasSave = false; return; }
+      const nw = 240, nx0 = cx - nw / 2, ny0 = LH * 0.585;
+      if (x > nx0 && x < nx0 + nw && y > ny0 && y < ny0 + 46) { clearSave(); hasSave = false; reset(); return; }
+      return;   // with a climb waiting, you choose before you sling
+    }
+  }
   if (redoPrompt) {
     if (buying > 0) return;   // mid "purchase": ignore taps
     const bw2 = Math.min(LW * 0.7, 520), bx2 = cx - bw2 / 2, by2 = LH * 0.40;
@@ -816,14 +969,22 @@ function txt(str, x, y, size, color, weight, align){
   ctx.fillText(str, x, y);
 }
 function drawBall(x, y, alpha){
-  const r = CFG.ballR;
+  const r = CFG.ballR, ch = CHARS[curChar];
   ctx.globalAlpha = alpha;
   const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.15, x, y, r);
-  g.addColorStop(0, '#fff3d0'); g.addColorStop(0.45, '#ffd166'); g.addColorStop(1, '#e09422');
-  ctx.shadowColor = 'rgba(255,200,80,0.75)'; ctx.shadowBlur = 22;
+  g.addColorStop(0, ch.hi); g.addColorStop(0.45, ch.mid); g.addColorStop(1, ch.lo);
+  ctx.shadowColor = ch.glow; ctx.shadowBlur = 22;
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
   ctx.shadowBlur = 0;
+  if (ch.web) {
+    ctx.strokeStyle = ch.web; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.62, 0, 7);
+    ctx.moveTo(x - r, y); ctx.lineTo(x + r, y);
+    ctx.moveTo(x, y - r); ctx.lineTo(x, y + r);
+    ctx.stroke();
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -980,25 +1141,49 @@ function render(t){
     ctx.beginPath(); ctx.arc(c.x, c.y + bob, 7.5, 0, 7); ctx.stroke();
   }
 
-  // pinball paddles
-  for (const fl of world.flippers) {
-    const ex = fl.px + fl.m * Math.cos(fl.angle) * fl.len;
-    const ey = fl.py + Math.sin(fl.angle) * fl.len;
-    if (fl.st === 1) {   // wind-up glow: the fair warning
-      ctx.shadowColor = fl.kind === 'up' ? 'rgba(232,194,104,0.9)' : 'rgba(255,107,129,0.9)';
-      ctx.shadowBlur = 18;
-    }
-    ctx.strokeStyle = fl.kind === 'up' ? '#e8c268' : fl.kind === 'side' ? '#c9ced9' : '#ff6b81';
-    ctx.lineWidth = 26; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(fl.px, fl.py); ctx.lineTo(ex, ey); ctx.stroke();
+  // pop bumpers: the white-domed, red-ringed DING machines
+  for (const bp of world.bumpers) {
+    const f = bp.flash;
+    ctx.shadowColor = 'rgba(255,255,255,' + (0.3 + 0.6 * f) + ')';
+    ctx.shadowBlur = 10 + 22 * f;
+    ctx.fillStyle = '#f4f6fa';
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.r, 0, 7); ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.moveTo(fl.px, fl.py); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = '#e0312e'; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.r * 0.62, 0, 7); ctx.stroke();
+    ctx.fillStyle = f > 0.4 ? '#ffd166' : '#e9edf4';
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.r * 0.3, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.r, 0, 7); ctx.stroke();
+  }
+
+  // pinball paddles: wedge-shaped flippers, armed until struck
+  for (const fl of world.flippers) {
+    const ca = Math.cos(fl.angle), sa = Math.sin(fl.angle);
+    const ex = fl.px + fl.m * ca * fl.len, ey = fl.py + sa * fl.len;
+    const ppx = -sa, ppy = fl.m * ca;
+    const col = fl.kind === 'up' ? '#e8c268' : fl.kind === 'side' ? '#c9ced9' : '#ff6b81';
+    if (fl.st === 2) { ctx.shadowColor = col; ctx.shadowBlur = 16; }
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(fl.px + ppx * 15, fl.py + ppy * 15);
+    ctx.lineTo(ex + ppx * 7, ey + ppy * 7);
+    ctx.lineTo(ex - ppx * 7, ey - ppy * 7);
+    ctx.lineTo(fl.px - ppx * 15, fl.py - ppy * 15);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(ex, ey, 7, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(fl.px + ppx * 15, fl.py + ppy * 15);
+    ctx.lineTo(ex + ppx * 7, ey + ppy * 7);
+    ctx.lineTo(ex - ppx * 7, ey - ppy * 7);
+    ctx.lineTo(fl.px - ppx * 15, fl.py - ppy * 15);
+    ctx.closePath(); ctx.stroke();
     ctx.fillStyle = fl.brutal ? '#ff5d5d' : '#8fa3c0';
-    ctx.beginPath(); ctx.arc(fl.px, fl.py, 11, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(fl.px, fl.py, 13, 0, 7); ctx.fill();
     ctx.fillStyle = '#0b0f19';
-    ctx.beginPath(); ctx.arc(fl.px, fl.py, 4.5, 0, 7); ctx.fill();
-    ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.arc(fl.px, fl.py, 5, 0, 7); ctx.fill();
   }
 
   // trail + ball + jump pips
@@ -1160,12 +1345,55 @@ function render(t){
     txt('LAST PASS', cx, LH * 0.24, 80, '#ffd166', 800);
     txt('DRAG ANYWHERE TO AIM — THE DOTS SHOW YOUR FLIGHT — RELEASE TO SLING.', cx, LH * 0.345, 25, '#cfd9ea');
     txt('THREE SLINGS PER LANDING, EACH WEAKER. NO DEATHS — JUST THE LONG WAY DOWN.', cx, LH * 0.39, 25, '#cfd9ea');
-    ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 3);
-    txt('PULL BACK AND RELEASE TO JUMP', cx, LH * 0.465, 27, '#5fd9e8', 700);
-    ctx.globalAlpha = 1;
+    if (!hasSave) {
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 3);
+      txt('PULL BACK AND RELEASE TO JUMP', cx, LH * 0.465, 27, '#5fd9e8', 700);
+      ctx.globalAlpha = 1;
+    } else {
+      const cw = 380, cxr = cx - cw / 2, cy0 = LH * 0.485;
+      ctx.fillStyle = 'rgba(95,217,232,0.18)';
+      ctx.strokeStyle = '#5fd9e8'; ctx.lineWidth = 3;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(cxr, cy0, cw, 64, 14); else ctx.rect(cxr, cy0, cw, 64);
+      ctx.fill(); ctx.stroke();
+      txt('CONTINUE — ' + saveAltLabel + 'm', cx, cy0 + 32, 26, '#5fd9e8', 800);
+      const nw = 240, nx0 = cx - nw / 2, ny0 = LH * 0.585;
+      ctx.strokeStyle = 'rgba(143,163,192,0.6)'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(nx0, ny0, nw, 46, 12); else ctx.rect(nx0, ny0, nw, 46);
+      ctx.stroke();
+      txt('NEW CLIMB', cx, ny0 + 23, 20, 'rgba(230,236,245,0.85)', 700);
+    }
+    // character picker
+    const ids = Object.keys(CHARS);
+    for (let i = 0; i < ids.length; i++) {
+      const id2 = ids[i], ch2 = CHARS[id2];
+      const ox = cx + (i - (ids.length - 1) / 2) * 150, oy = LH * 0.80;
+      const locked = !unlockedChars.has(id2);
+      const g2 = ctx.createRadialGradient(ox - 10, oy - 12, 4, ox, oy, 30);
+      g2.addColorStop(0, ch2.hi); g2.addColorStop(0.5, ch2.mid); g2.addColorStop(1, ch2.lo);
+      ctx.globalAlpha = locked ? 0.45 : 1;
+      ctx.fillStyle = g2;
+      ctx.beginPath(); ctx.arc(ox, oy, 30, 0, 7); ctx.fill();
+      if (ch2.web) {
+        ctx.strokeStyle = ch2.web; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(ox, oy, 19, 0, 7);
+        ctx.moveTo(ox - 30, oy); ctx.lineTo(ox + 30, oy);
+        ctx.moveTo(ox, oy - 30); ctx.lineTo(ox, oy + 30);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      if (id2 === curChar) {
+        ctx.strokeStyle = '#5fd9e8'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(ox, oy, 38, 0, 7); ctx.stroke();
+      }
+      txt(ch2.name, ox, oy + 52, 18, id2 === curChar ? '#5fd9e8' : 'rgba(230,236,245,0.85)', 700);
+      if (charBuying && charBuying.id === id2) txt('PROCESSING…', ox, oy + 73, 14, '#e6ecf5', 700);
+      else if (locked) txt('🔒 $' + ch2.price.toFixed(2), ox, oy + 73, 14, 'rgba(255,209,102,0.85)', 700);
+    }
     // what's-new callout for playtesters
     const latest = CHANGELOG[0];
-    if (latest.highlights.length) {
+    if (latest.highlights.length && !hasSave) {
       const hot = unseenLog;
       txt('NEW IN v' + latest.v, cx, LH * 0.575, 22, hot ? '#ffd166' : 'rgba(143,163,192,0.75)', 800);
       for (let i = 0; i < latest.highlights.length; i++)
@@ -1212,18 +1440,30 @@ function frame(now){
   const rdt = dt;
   dt *= timeScale;   // the redo moment plays out in slow motion
   if (redoPrompt && (redoPrompt.t += rdt) > (redoCount() > 0 && buying <= 0 ? 3 : 4.5)) closePrompt();
+  if (charBuying) {
+    charBuying.t -= rdt;
+    if (charBuying.t <= 0) {
+      unlockedChars.add(charBuying.id);
+      sSet('lp-chars', JSON.stringify([...unlockedChars]));
+      curChar = charBuying.id;
+      sSet('lp-char', curChar);
+      parts.push({ x: ball.x, y: ball.y - 90, t: 0, txt: CHARS[curChar].name + ' UNLOCKED (TEST — NO CHARGE)', col: '#7fe3a0' });
+      sfx(523, 1046, 0.25, 'sine', 0.2);
+      charBuying = null;
+    }
+  }
   if (buying > 0) {
     buying -= rdt;
     if (buying <= 0) {
       buying = 0;
       redoWallet += 5;
       sSet('lp-redo-wallet', redoWallet);
-      if (redoPrompt) redoPrompt.t = 0;
       parts.push({ x: ball.x, y: ball.y - 90, t: 0, txt: '+5 REDOS (TEST — NO CHARGE)', col: '#7fe3a0' });
       sfx(523, 1046, 0.25, 'sine', 0.2);
+      if (redoPrompt) doRedo();   // you bought it mid-fall — the rescue is the product. Auto-use one.
     }
   }
-  if (orientFlip) { orientFlip = false; reset(); }
+  if (orientFlip) { orientFlip = false; if (!(sGet('lp-save') && loadGame())) reset(); }
   if (!panelOpen) {
     acc += dt;
     while (acc >= STEP) { step(STEP); acc -= STEP; }
@@ -1261,6 +1501,7 @@ gear.addEventListener('click', () => {
   panel.classList.toggle('open', panelOpen);
 });
 document.getElementById('restart').addEventListener('click', () => {
+  clearSave(); hasSave = false;
   reset(); panelOpen = false; panel.classList.remove('open');
 });
 
@@ -1294,6 +1535,10 @@ document.getElementById('whatsnew').addEventListener('click', () => {
 document.getElementById('logclose').addEventListener('click', () => logEl.classList.remove('open'));
 
 reset();
+try {
+  const sv = sGet('lp-save');
+  if (sv) { hasSave = true; saveAltLabel = Math.round(JSON.parse(sv).alt || 0); }
+} catch(e){}
 requestAnimationFrame(frame);
 </script>
 </body>
