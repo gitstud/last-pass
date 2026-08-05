@@ -84,15 +84,21 @@ const TUNE = [
 const PULL_MAX = 270;
 const TIERS = [330, 560, 720];
 
-/* Altitude zones: the world gets stranger the higher you climb. */
+/* Altitude zones: fixed-size chapters. Leaving one is a celebration, and
+   each new zone introduces a block type (Doodle Jump's roster, adapted).
+   Max spec'd ~3000m zones — running 1500 while the block variety is
+   validated; this constant is the only thing to change back. */
+const ZONE_M = 1500;
 const ZONES = [
-  { at: 0,    name: 'THE COURTYARD',   top: '#0d1220', bot: '#18202f' },
-  { at: 120,  name: 'THE RAMPARTS',    top: '#0e1224', bot: '#1c2338' },
-  { at: 300,  name: 'THE CLOUDBANK',   top: '#101a2e', bot: '#2c3a57' },
-  { at: 550,  name: 'THE HIGH SKY',    top: '#0a1226', bot: '#20355e' },
-  { at: 850,  name: 'THE STARFIELD',   top: '#05070f', bot: '#0e1526' },
-  { at: 1200, name: "THE MOON'S REACH", top: '#020308', bot: '#090d18' },
+  { name: 'THE COURTYARD',    top: '#0d1220', bot: '#18202f', block: null },
+  { name: 'THE RAMPARTS',     top: '#0e1224', bot: '#1c2338', block: 'mover' },
+  { name: 'THE CLOUDBANK',    top: '#101a2e', bot: '#2c3a57', block: 'crumble' },
+  { name: 'THE HIGH SKY',     top: '#0a1226', bot: '#20355e', block: 'ghost' },
+  { name: 'THE STARFIELD',    top: '#05070f', bot: '#0e1526', block: 'spring' },
+  { name: "THE MOON'S REACH", top: '#020308', bot: '#090d18', block: null },
 ];
+const BLOCK_LABEL = { mover: 'MOVING PLATFORMS', crumble: 'CRUMBLING PLATFORMS',
+                      ghost: 'PHANTOM PLATFORMS', spring: 'SPRING PADS' };
 
 /* ================= Canvas / coords ================= */
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -120,7 +126,7 @@ let coinsT = +(sGet('lp-coins') || 0);
 let GROUND_Y = 700;
 let camX = 0, camY = 0, peakY = 700, milestone = 0, jumpsLeft = 3, zoneIdx = 0;
 let panelOpen = false, SIM = false, groundHit = false;
-let parts = [];
+let parts = [], confetti = [], banner = null, zoneReached = 0, consecSpecial = 0;
 const world = { flats:[], coins:[] };
 let cursor = { x: 0, y: 0 }, dir = 1;
 const ball = { x:0, y:0, vx:0, vy:0, trail:[] };
@@ -130,11 +136,7 @@ function sGet(k){ try { return localStorage.getItem(k); } catch(e){ return null;
 function sSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
 function rnd(a,b){ return a + Math.random() * (b - a); }
 function altOf(y){ return Math.max(0, Math.round((GROUND_Y - CFG.ballR - y) / 10)); }
-function zoneAt(a){
-  let z = 0;
-  for (let i = 0; i < ZONES.length; i++) if (a >= ZONES[i].at) z = i;
-  return z;
-}
+function zoneAt(a){ return Math.min((a / ZONE_M) | 0, ZONES.length - 1); }
 function lerpHex(c1, c2, t){
   const p = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
   const a = p(c1), b = p(c2);
@@ -154,6 +156,32 @@ function tierPick(a){
   const r = Math.random();
   return r < w[0] ? 0 : r < w[0] + w[1] ? 1 : 2;
 }
+function typeFor(a){
+  const zi = zoneAt(a);
+  const unlocked = ZONES.slice(1, zi + 1).map(z => z.block).filter(Boolean);
+  if (!unlocked.length) return 'static';
+  const newest = ZONES[zi].block;
+  const r = Math.random();
+  if (newest && r < 0.30) return newest;           // the zone's own block is the star
+  let p = newest ? 0.30 : 0;
+  for (const b of unlocked) {
+    if (b === newest) continue;
+    p += 0.12;
+    if (r < p) return b;                            // older blocks keep appearing, rarer
+  }
+  return 'static';
+}
+function makePlat(px, py, w, a, forceStatic){
+  let type = forceStatic ? 'static' : typeFor(a);
+  if (type !== 'static' && consecSpecial >= 2) type = 'static';   // the ladder always keeps rungs
+  consecSpecial = type === 'static' ? 0 : consecSpecial + 1;
+  const f = { x0: px - w / 2, x1: px + w / 2, y: py, origY: py, type };
+  if (type === 'mover') { f.cxr = px; f.w = w; f.range = rnd(70, 150); f.spd = rnd(0.6, 1.1); f.phase = rnd(0, 6.28); }
+  if (type === 'crumble') { f.hitAt = 0; f.fallV = 0; }
+  if (type === 'ghost') { f.usedAt = 0; f.fade = 1; }
+  world.flats.push(f);
+  return f;
+}
 function genRun(){
   const a = altOf(cursor.y);
   const steps = 4 + (rnd(0, 4) | 0);
@@ -162,17 +190,15 @@ function genRun(){
     const rise = TIERS[t] + rnd(-45, 5);
     const dx = dir * (t === 0 ? rnd(170, 300) : t === 1 ? rnd(200, 400) : rnd(240, 460));
     cursor = { x: cursor.x + dx, y: cursor.y - rise };
-    const w = rnd(150, 250);
-    world.flats.push({ x0: cursor.x - w / 2, x1: cursor.x + w / 2, y: cursor.y });
+    makePlat(cursor.x, cursor.y, rnd(150, 250), a);
     const roll = Math.random();
     if (roll < 0.45) world.coins.push({ x: cursor.x, y: cursor.y - 52, got: false });
     else if (roll < 0.7) coinArcAt(cursor.x - dx / 2, cursor.y + rise / 2 - rnd(0, 50));
   }
-  // wide turn platform: an easy step, a place to breathe, then reverse
+  // wide turn platform: an easy step, a place to breathe, then reverse — always plain
   const rise = TIERS[0] + rnd(-40, 0);
   cursor = { x: cursor.x + dir * rnd(160, 260), y: cursor.y - rise };
-  const w = rnd(260, 340);
-  world.flats.push({ x0: cursor.x - w / 2, x1: cursor.x + w / 2, y: cursor.y });
+  makePlat(cursor.x, cursor.y, rnd(260, 340), a, true);
   if (Math.random() < 0.4) coinArcAt(cursor.x, cursor.y - 90);
   dir = -dir;
   const g = world.flats[0];
@@ -191,7 +217,8 @@ function reset(){
   ball.x = 0; ball.y = GROUND_Y - CFG.ballR - 1;
   ball.vx = 0; ball.vy = 0; ball.trail = [];
   camX = ball.x - LW / 2; camY = ball.y - LH * 0.55;
-  peakY = ball.y; milestone = 0; zoneIdx = 0; jumpsLeft = CFG.jumps;
+  peakY = ball.y; milestone = 0; zoneIdx = 0; zoneReached = 0; jumpsLeft = CFG.jumps;
+  consecSpecial = 0; confetti = []; banner = null;
   aims.clear(); parts = [];
   state = S_READY;
   ensureWorld();
@@ -240,6 +267,7 @@ function physBall(b, dt){
   groundHit = false;
   for (let it = 0; it < 2; it++) {
     for (const f of world.flats) {
+      if (f.gone || f.solidOff) continue;
       const fh = f.ground ? 600 : 30;
       if (f.y > b.y + r || f.y + fh < b.y - r || f.x0 > b.x + r || f.x1 < b.x - r) continue;
       collideRect(b, f.x0, f.y, f.x1 - f.x0, fh);
@@ -251,6 +279,53 @@ function physBall(b, dt){
 
 function step(dt){
   physBall(ball, dt);
+
+  // block behaviours
+  const tNow = performance.now() / 1000;
+  let support = null;
+  for (const f of world.flats) {
+    if (f.gone) continue;
+    if (f.type === 'mover' && !f.falling) {
+      const nx0 = f.cxr - f.w / 2 + Math.sin(tNow * f.spd + f.phase) * f.range;
+      f.lastDx = nx0 - f.x0;
+      f.x0 = nx0; f.x1 = nx0 + f.w;
+    }
+    if (!support && !f.ground && !f.solidOff &&
+        ball.x > f.x0 - CFG.ballR * 0.6 && ball.x < f.x1 + CFG.ballR * 0.6 &&
+        Math.abs(f.y - (ball.y + CFG.ballR)) < 7 && ball.vy >= -20) support = f;
+  }
+  if (support) {
+    if (support.type === 'mover' && support.lastDx) ball.x += support.lastDx;   // ride it
+    if (support.type === 'crumble' && !support.hitAt) { support.hitAt = tNow; sfx(220, 140, 0.12, 'square', 0.12); }
+    if (support.type === 'ghost' && !support.usedAt) support.usedAt = tNow;
+    if (support.type === 'spring' && (!support.sprAt || tNow - support.sprAt > 0.35)) {
+      support.sprAt = tNow;
+      ball.vy = -1750;
+      jumpsLeft = CFG.jumps;
+      sfx(300, 900, 0.18, 'triangle', 0.22);
+    }
+  }
+  for (const f of world.flats) {
+    if (f.type === 'crumble' && f.hitAt && !f.gone) {
+      if (!f.falling && tNow - f.hitAt > 0.45) { f.falling = true; f.solidOff = true; f.fallV = 0; }
+      if (f.falling) {
+        f.fallV += 2000 * dt; f.y += f.fallV * dt;
+        if (f.y > camY + LH + 300) { f.gone = true; f.respawnAt = tNow + 6; }
+      }
+    }
+    if (f.type === 'ghost' && f.usedAt && !f.gone && tNow - f.usedAt > 0.6) {
+      f.solidOff = true;
+      f.fade -= dt * 3;
+      if (f.fade <= 0) { f.gone = true; f.respawnAt = tNow + 8; }
+    }
+    // broken blocks grow back — falls must never strand you under holes you made
+    if (f.gone && f.respawnAt && tNow > f.respawnAt) {
+      f.gone = false; f.solidOff = false; f.respawnAt = 0;
+      if (f.type === 'crumble') { f.y = f.origY; f.hitAt = 0; f.falling = false; f.fallV = 0; }
+      if (f.type === 'ghost') { f.fade = 1; f.usedAt = 0; }
+    }
+  }
+
   camX += (ball.x - LW * 0.5 - camX) * Math.min(1, dt * 8);
   camY += (ball.y - LH * 0.55 - camY) * Math.min(1, dt * 8);
   ensureWorld();
@@ -264,12 +339,20 @@ function step(dt){
     parts.push({ x: ball.x, y: ball.y - 70, t: 0, txt: (m * 100) + 'm!', col: '#5fd9e8' });
     sfx(700, 1400, 0.2, 'sine', 0.2);
   }
-  const z = zoneAt(altOf(ball.y));
-  if (z > zoneIdx) {
-    zoneIdx = z;
-    parts.push({ x: ball.x, y: ball.y - 120, t: 0, txt: ZONES[z].name, col: '#ffd166' });
-    sfx(520, 1040, 0.3, 'sine', 0.2);
-  } else if (z < zoneIdx) zoneIdx = z;
+  // zone celebration: first time the run's peak crosses a zone boundary
+  const zPeak = zoneAt(altOf(peakY));
+  if (zPeak > zoneReached) {
+    zoneReached = zPeak;
+    const zn2 = ZONES[zPeak];
+    banner = { t: 0, txt: zn2.name, sub: zn2.block ? 'NEW BLOCK: ' + BLOCK_LABEL[zn2.block] : 'EVERYTHING THE TOWER HAS' };
+    for (let i = 0; i < 46; i++)
+      confetti.push({ x: ball.x + rnd(-40, 40), y: ball.y - 30, vx: rnd(-520, 520), vy: rnd(-850, -120),
+                      s: rnd(4, 9), t: 0, col: ['#ffd166', '#5fd9e8', '#7fe3a0', '#ff8c5a'][i % 4] });
+    sfx(523, 523, 0.12, 'square', 0.18, 0);
+    sfx(659, 659, 0.12, 'square', 0.18, 0.13);
+    sfx(784, 1046, 0.3, 'square', 0.2, 0.26);
+  }
+  zoneIdx = zoneAt(altOf(ball.y));
 
   for (const c of world.coins) {
     if (c.got || Math.hypot(ball.x - c.x, ball.y - c.y) > CFG.ballR + 17) continue;
@@ -324,10 +407,10 @@ function ensureAudio(){
   if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
   if (ac && ac.state === 'suspended') ac.resume();
 }
-function sfx(f0, f1, dur, type, vol){
+function sfx(f0, f1, dur, type, vol, delay){
   if (SIM || !ac) return;
   try {
-    const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime;
+    const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime + (delay || 0);
     o.type = type || 'sine';
     o.frequency.setValueAtTime(Math.max(f0, 1), t0);
     o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t0 + dur);
@@ -407,8 +490,7 @@ function render(t){
   const a = altOf(ball.y);
   const zi = zoneAt(a);
   const zn = ZONES[Math.min(zi + 1, ZONES.length - 1)];
-  const span = Math.max(1, zn.at - ZONES[zi].at);
-  const zt = zi === ZONES.length - 1 ? 0 : Math.max(0, Math.min(1, (a - ZONES[zi].at) / span));
+  const zt = zi === ZONES.length - 1 ? 0 : Math.max(0, Math.min(1, (a - zi * ZONE_M) / ZONE_M));
   const sky = ctx.createLinearGradient(0, 0, 0, LH);
   sky.addColorStop(0, lerpHex(ZONES[zi].top, zn.top, zt));
   sky.addColorStop(1, lerpHex(ZONES[zi].bot, zn.bot, zt));
@@ -446,14 +528,62 @@ function render(t){
 
   // platforms + ground
   for (const f of world.flats) {
-    ctx.fillStyle = checkerPat;
-    ctx.beginPath();
-    if (f.ground) ctx.rect(f.x0, f.y, f.x1 - f.x0, camY + LH + 80 - f.y);
-    else if (ctx.roundRect) ctx.roundRect(f.x0, f.y, f.x1 - f.x0, 30, 12);
-    else ctx.rect(f.x0, f.y, f.x1 - f.x0, 30);
-    ctx.fill();
-    ctx.strokeStyle = '#b06a4b'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(f.x0 + 8, f.y + 3); ctx.lineTo(f.x1 - 8, f.y + 3); ctx.stroke();
+    if (f.gone) continue;
+    if (f.ground) {
+      ctx.fillStyle = checkerPat;
+      ctx.beginPath();
+      ctx.rect(f.x0, f.y, f.x1 - f.x0, camY + LH + 80 - f.y);
+      ctx.fill();
+      ctx.strokeStyle = '#b06a4b'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(f.x0 + 8, f.y + 3); ctx.lineTo(f.x1 - 8, f.y + 3); ctx.stroke();
+      continue;
+    }
+    ctx.save();
+    if (f.type === 'crumble' && f.hitAt && !f.falling) ctx.translate(Math.sin(t * 60) * 3, 0);
+    const slab = () => {
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(f.x0, f.y, f.x1 - f.x0, 30, 12);
+      else ctx.rect(f.x0, f.y, f.x1 - f.x0, 30);
+    };
+    if (f.type === 'ghost') {
+      ctx.globalAlpha = 0.25 + 0.5 * Math.max(0, f.fade);
+      ctx.fillStyle = '#dfe8ff';
+      slab(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 2.5;
+      slab(); ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else if (f.type === 'crumble') {
+      ctx.fillStyle = '#6e4a34';
+      slab(); ctx.fill();
+      ctx.strokeStyle = '#4a2f21'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(f.x0 + (f.x1 - f.x0) * 0.30, f.y + 2); ctx.lineTo(f.x0 + (f.x1 - f.x0) * 0.42, f.y + 28);
+      ctx.moveTo(f.x0 + (f.x1 - f.x0) * 0.68, f.y + 2); ctx.lineTo(f.x0 + (f.x1 - f.x0) * 0.58, f.y + 28);
+      ctx.stroke();
+      ctx.strokeStyle = '#8a5a3c'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(f.x0 + 8, f.y + 3); ctx.lineTo(f.x1 - 8, f.y + 3); ctx.stroke();
+    } else {
+      ctx.fillStyle = checkerPat;
+      slab(); ctx.fill();
+      ctx.strokeStyle = f.type === 'mover' ? '#5fa8ff' : '#b06a4b'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(f.x0 + 8, f.y + 3); ctx.lineTo(f.x1 - 8, f.y + 3); ctx.stroke();
+      if (f.type === 'mover') {
+        ctx.fillStyle = '#5fa8ff';
+        ctx.beginPath(); ctx.moveTo(f.x0 + 4, f.y + 15); ctx.lineTo(f.x0 + 16, f.y + 7); ctx.lineTo(f.x0 + 16, f.y + 23); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(f.x1 - 4, f.y + 15); ctx.lineTo(f.x1 - 16, f.y + 7); ctx.lineTo(f.x1 - 16, f.y + 23); ctx.closePath(); ctx.fill();
+      }
+      if (f.type === 'spring') {
+        const mx = (f.x0 + f.x1) / 2;
+        ctx.strokeStyle = '#c9ced9'; ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(mx - 10, f.y); ctx.lineTo(mx + 10, f.y - 5);
+        ctx.lineTo(mx - 10, f.y - 10); ctx.lineTo(mx + 10, f.y - 15);
+        ctx.stroke();
+        ctx.fillStyle = '#ff5d5d';
+        ctx.fillRect(mx - 16, f.y - 22, 32, 7);
+      }
+    }
+    ctx.restore();
   }
   // coins
   for (const c of world.coins) {
@@ -504,7 +634,13 @@ function render(t){
     if (!ok) txt('LAND TO RELOAD', ball.x, ball.y - 64, 22, '#ff5d5d', 700);
   }
 
-  // particles
+  // confetti + particles
+  for (const c of confetti) {
+    ctx.globalAlpha = Math.max(0, 1 - c.t / 1.6);
+    ctx.fillStyle = c.col;
+    ctx.fillRect(c.x, c.y, c.s, c.s);
+  }
+  ctx.globalAlpha = 1;
   for (const p of parts) {
     ctx.globalAlpha = Math.max(0, 1 - p.t / 0.9);
     txt(p.txt, p.x, p.y - p.t * 45, 40, p.col || '#7fe3a0', 700);
@@ -523,6 +659,14 @@ function render(t){
   ctx.strokeStyle = '#e09422'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(27, 66, 4.5, 0, 7); ctx.stroke();
   txt(String(coinsT), 44, 66, 22, '#ffd166', 700, 'left');
+
+  if (banner) {
+    const aB = banner.t < 0.25 ? banner.t / 0.25 : banner.t > 2.1 ? Math.max(0, (2.6 - banner.t) / 0.5) : 1;
+    ctx.globalAlpha = aB;
+    txt(banner.txt, cx, LH * 0.30, 64, '#ffd166', 800);
+    txt(banner.sub, cx, LH * 0.375, 26, '#5fd9e8', 700);
+    ctx.globalAlpha = 1;
+  }
 
   if (state === S_READY) {
     txt('LAST PASS', cx, LH * 0.24, 80, '#ffd166', 800);
@@ -552,6 +696,9 @@ function frame(now){
   if (ball.trail.length > 16) ball.trail.shift();
   for (const p of parts) p.t += dt;
   parts = parts.filter(p => p.t < 0.9);
+  for (const c of confetti) { c.t += dt; c.vy += 1500 * dt; c.x += c.vx * dt; c.y += c.vy * dt; }
+  confetti = confetti.filter(c => c.t < 1.6);
+  if (banner && (banner.t += dt) > 2.6) banner = null;
   render(now / 1000);
 }
 
