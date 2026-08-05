@@ -107,8 +107,11 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.4';
+const VERSION = '0.4.1';
 const CHANGELOG = [
+  { v: '0.4.1', date: 'Aug 5', title: 'The ground is now actually the ground',
+    highlights: [],
+    items: [ 'Fixed: falling far off to the side could miss the edge of the ground and drop you into the void forever. The ground is now infinite, as advertised.' ] },
   { v: '0.4', date: 'Aug 5', title: 'Zones & block types',
     highlights: ['ZONES EVERY 500m WITH CELEBRATIONS', 'NEW BLOCKS: MOVERS, CRUMBLERS, PHANTOMS, SPRINGS'],
     items: [
@@ -251,9 +254,6 @@ function genRun(){
   makePlat(cursor.x, cursor.y, rnd(260, 340), a, true);
   if (Math.random() < 0.4) coinArcAt(cursor.x, cursor.y - 90);
   dir = -dir;
-  const g = world.flats[0];
-  g.x0 = Math.min(g.x0, cursor.x - 900);
-  g.x1 = Math.max(g.x1, cursor.x + 900);
 }
 function ensureWorld(){
   while (cursor.y > camY - 1400) genRun();
@@ -318,9 +318,12 @@ function physBall(b, dt){
   for (let it = 0; it < 2; it++) {
     for (const f of world.flats) {
       if (f.gone || f.solidOff) continue;
-      const fh = f.ground ? 600 : 30;
-      if (f.y > b.y + r || f.y + fh < b.y - r || f.x0 > b.x + r || f.x1 < b.x - r) continue;
-      collideRect(b, f.x0, f.y, f.x1 - f.x0, fh);
+      if (f.ground) {   // the ground is infinite — it's always underneath you
+        if (f.y <= b.y + r) collideRect(b, b.x - 2000, f.y, 4000, 600);
+        continue;
+      }
+      if (f.y > b.y + r || f.y + 30 < b.y - r || f.x0 > b.x + r || f.x1 < b.x - r) continue;
+      collideRect(b, f.x0, f.y, f.x1 - f.x0, 30);
     }
   }
   // character-style skid: strong horizontal braking while on a surface
@@ -579,13 +582,13 @@ function render(t){
   // platforms + ground
   for (const f of world.flats) {
     if (f.gone) continue;
-    if (f.ground) {
+    if (f.ground) {   // drawn to the edges of wherever the camera looks
       ctx.fillStyle = checkerPat;
       ctx.beginPath();
-      ctx.rect(f.x0, f.y, f.x1 - f.x0, camY + LH + 80 - f.y);
+      ctx.rect(camX - 60, f.y, LW + 120, camY + LH + 80 - f.y);
       ctx.fill();
       ctx.strokeStyle = '#b06a4b'; ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.moveTo(f.x0 + 8, f.y + 3); ctx.lineTo(f.x1 - 8, f.y + 3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(camX - 60, f.y + 3); ctx.lineTo(camX + LW + 60, f.y + 3); ctx.stroke();
       continue;
     }
     ctx.save();
