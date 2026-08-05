@@ -44,7 +44,14 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
 5. Monetization: content + cosmetics IAP (zone packs, ninja skins/trails).
    Max explicitly rejected selling checkpoints/progress-recovery ("seems like
    I make you lose on purpose"). Coins (persistent, `lp-coins`) are the soft
-   currency.
+   currency. Working framework (Aug 5): (1) cosmetics as identity — skins,
+   trails, sling/preview styles, celebration themes, priced in coins, coin
+   bundles as IAP; (2) content packs — themed zone/chapter expansions,
+   one-time purchases; (3) a cosmetic-only "climb pass" keyed to peak
+   altitude per season; (4) rewarded-only ads as an optional lever, never
+   interstitials; (5) NEVER: energy timers, pay-for-power, loss-recovery
+   purchases. Sequence: instrument retention first (PM collaborator), ship
+   monetization only after D1/D7 proves the loop.
 6. "Reverse pachinko" is the pitch line. Naming direction: Chinese —
    弹弓 dàngōng ("elastic bow"/slingshot); explore variations.
 
