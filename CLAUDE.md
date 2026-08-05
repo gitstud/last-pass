@@ -52,6 +52,11 @@ re-adding energy to the ball. The ⚙ panel exposes all knobs live on device.
    interstitials; (5) NEVER: energy timers, pay-for-power, loss-recovery
    purchases. Sequence: instrument retention first (PM collaborator), ship
    monetization only after D1/D7 proves the loop.
+   RULE: no pausing inside the redo window — opening settings forfeits the
+   offer (the moment exists only in real time; slow-mo IS the thinking time).
+   Backlog: an opt-in "calm redo window" accessibility toggle (extended or
+   frozen timer) once a player-facing settings screen exists — default stays
+   brutal.
    VALIDATED DESIGN FINDING (Aug 5, Max): the redo prompt's 3s decision window
    is an anticipated-regret engine — hesitating until it closes carries the
    fall AND the regret; keep it brutal for SPENDING redos. HARD RULE: never

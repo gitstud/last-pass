@@ -107,8 +107,11 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.11.1';
+const VERSION = '0.11.2';
 const CHANGELOG = [
+  { v: '0.11.2', date: 'Aug 5', title: 'No stopping the clock',
+    highlights: [],
+    items: [ 'Pausing during the redo window now forfeits the offer — the decision only exists in real time. (Slow motion is already your thinking time.)' ] },
   { v: '0.11.1', date: 'Aug 5', title: 'Watch the window close',
     highlights: [],
     items: [ 'The redo decision window now visibly drains under the button — cyan while you have time, red when you don’t. Choose faster.' ] },
@@ -1224,6 +1227,7 @@ for (const [key, label, min, max, stp] of TUNE) {
 const panel = document.getElementById('panel');
 const gear = document.getElementById('gear');
 gear.addEventListener('click', () => {
+  if (redoPrompt) closePrompt();   // the redo moment exists only in real time — pausing forfeits it
   panelOpen = !panelOpen;
   panel.classList.toggle('open', panelOpen);
 });
