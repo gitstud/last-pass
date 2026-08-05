@@ -107,8 +107,14 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.5';
+const VERSION = '0.6';
 const CHANGELOG = [
+  { v: '0.6', date: 'Aug 5', title: 'A tutorial you can actually read',
+    highlights: ['BIGGER, CLEARER HOW-TO-PLAY'],
+    items: [
+      'The how-to-play card is now big and front-and-centre instead of whispering at the bottom of the screen.',
+      'The double-jump step explains the three-sling system directly, and your sling dots grow with a spotlight while they’re the lesson.',
+      'Tip added: air slings are weaker — time them at the top of your arc.' ] },
   { v: '0.5', date: 'Aug 5', title: 'First-moves tutorial',
     highlights: ['NEW PLAYERS: EARN YOUR SINGLE, DOUBLE & TRIPLE JUMP'],
     items: [
@@ -146,10 +152,12 @@ const CHANGELOG = [
 /* First-moves tutorial: sequential achievements that teach the mechanic.
    Shown until completed once on this device (lp-tut-done). */
 const TUT = [
-  { key: 'sling',  name: 'FIRST SLING',   label: 'PULL ANYWHERE ON SCREEN, THEN RELEASE' },
-  { key: 'land',   name: 'CLEAN LANDING', label: 'LAND ON A PLATFORM' },
-  { key: 'double', name: 'DOUBLE JUMP',   label: 'SLING AGAIN WHILE STILL IN THE AIR' },
-  { key: 'triple', name: 'TRIPLE JUMP',   label: 'CHAIN ALL THREE SLINGS BEFORE LANDING' },
+  { key: 'single', name: 'SINGLE JUMP',
+    lines: ['PULL BACK ANYWHERE ON SCREEN, LIKE A SLINGSHOT — RELEASE TO FLY.', 'LAND ON A PLATFORM. LANDING REFILLS YOUR SLINGS.'] },
+  { key: 'double', name: 'DOUBLE JUMP',
+    lines: ['THE BLUE DOTS ABOVE YOU ARE YOUR SLINGS — YOU CARRY 3.', 'FIRE ONE MID-AIR: THAT’S A DOUBLE JUMP.'] },
+  { key: 'triple', name: 'TRIPLE JUMP',
+    lines: ['NOW CHAIN ALL 3 BEFORE LANDING.', 'EACH AIR SLING IS WEAKER — TIME THEM AT THE TOP OF YOUR ARC.'] },
 ];
 let tutIdx = null;   // resolved after sGet is defined; -1 = done
 function tutComplete(key){
@@ -381,7 +389,7 @@ function step(dt){
         Math.abs(f.y - (ball.y + CFG.ballR)) < 7 && ball.vy >= -20) support = f;
   }
   if (support) {
-    tutComplete('land');
+    tutComplete('single');
     if (support.type === 'mover' && support.lastDx) ball.x += support.lastDx;   // ride it
     if (support.type === 'crumble' && !support.hitAt) { support.hitAt = tNow; sfx(220, 140, 0.12, 'square', 0.12); }
     if (support.type === 'ghost' && !support.usedAt) support.usedAt = tNow;
@@ -473,8 +481,7 @@ function fire(a){
   ball.vx = s.vx; ball.vy = s.vy;
   if (state === S_READY) state = S_PLAY;
   const used = CFG.jumps - jumpsLeft;
-  if (used === 1) tutComplete('sling');
-  else if (used === 2) tutComplete('double');
+  if (used === 2) tutComplete('double');
   else if (used === 3) tutComplete('triple');
   const sp = Math.hypot(s.vx, s.vy);
   sfx(200 + Math.min(sp, 3000) * 0.15, 120, 0.09, 'triangle', 0.15);
@@ -698,10 +705,18 @@ function render(t){
   ctx.globalAlpha = 1;
   drawBall(ball.x, ball.y, 1);
   if (state === S_PLAY) {
+    const teach = tutIdx >= 0 && (TUT[tutIdx].key === 'double' || TUT[tutIdx].key === 'triple');
+    const pr = teach ? 8 : 4.5, gap = teach ? 26 : 16;
+    if (teach) {   // spotlight the sling pips while they're the lesson
+      ctx.strokeStyle = 'rgba(95,217,232,' + (0.5 + 0.4 * Math.sin(t * 5)) + ')';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(ball.x, ball.y - CFG.ballR - 16, 40, 0, 7); ctx.stroke();
+      txt('YOUR SLINGS', ball.x, ball.y - CFG.ballR - 74, 22, '#5fd9e8', 700);
+    }
     for (let i = 0; i < CFG.jumps; i++) {
-      const px = ball.x + (i - (CFG.jumps - 1) / 2) * 16;
+      const px = ball.x + (i - (CFG.jumps - 1) / 2) * gap;
       ctx.fillStyle = i < jumpsLeft ? 'rgba(95,217,232,0.9)' : 'rgba(95,217,232,0.18)';
-      ctx.beginPath(); ctx.arc(px, ball.y - CFG.ballR - 15, 4.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, ball.y - CFG.ballR - 15, pr, 0, 7); ctx.fill();
     }
   }
 
@@ -779,17 +794,27 @@ function render(t){
     }
     txt('v' + VERSION, 14, LH - 18, 17, 'rgba(143,163,192,0.5)', 600, 'left');
   }
-  // first-moves tutorial bar
+  // first-moves tutorial: a proper how-to-play card, big enough to matter,
+  // parked in the upper third so the ball and your arcs stay visible
   if (tutIdx >= 0 && state === S_PLAY) {
-    ctx.fillStyle = 'rgba(6,9,16,0.5)';
+    const st = TUT[tutIdx];
+    const bw = Math.min(LW * 0.9, 980), bx = cx - bw / 2, by = LH * 0.135;
+    const bh = 140 + st.lines.length * 34;
+    ctx.fillStyle = 'rgba(6,9,16,0.55)';
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(cx - LW * 0.32, LH - 76, LW * 0.64, 54, 12);
-    else ctx.rect(cx - LW * 0.32, LH - 76, LW * 0.64, 54);
+    if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 18); else ctx.rect(bx, by, bw, bh);
     ctx.fill();
-    txt(TUT[tutIdx].name + ' — ' + TUT[tutIdx].label, cx, LH - 55, 22, '#5fd9e8', 700);
+    ctx.strokeStyle = 'rgba(95,217,232,0.4)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 18); else ctx.rect(bx, by, bw, bh);
+    ctx.stroke();
+    txt('HOW TO PLAY — STEP ' + (tutIdx + 1) + ' OF ' + TUT.length, cx, by + 28, 19, 'rgba(143,163,192,0.9)', 700);
+    txt(st.name, cx, by + 68, 44, '#ffd166', 800);
+    for (let i = 0; i < st.lines.length; i++)
+      txt(st.lines[i], cx, by + 106 + i * 34, 25, '#e6ecf5', 600);
     for (let i = 0; i < TUT.length; i++) {
       ctx.fillStyle = i < tutIdx ? '#7fe3a0' : i === tutIdx ? '#5fd9e8' : 'rgba(143,163,192,0.3)';
-      ctx.beginPath(); ctx.arc(cx + (i - (TUT.length - 1) / 2) * 22, LH - 33, 4.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + (i - (TUT.length - 1) / 2) * 26, by + bh - 20, 5.5, 0, 7); ctx.fill();
     }
   }
   if (panelOpen) txt('PAUSED — TUNING', cx, 150, 24, '#5fd9e8', 700);
