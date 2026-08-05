@@ -107,8 +107,13 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.7';
+const VERSION = '0.8';
 const CHANGELOG = [
+  { v: '0.8', date: 'Aug 5', title: 'Wall-climb sections',
+    highlights: ['NEW: WALL LADDERS — PING-PONG UP THE SLABS TO A SAFE DECK'],
+    items: [
+      'From The Cloudbank up, some stretches of the tower are ladders of staggered wall slabs: kiss one, sling, kiss the next — a vertical sprint capped by a wide safe deck.',
+      'Coins hug the walls to show the line.' ] },
   { v: '0.7', date: 'Aug 5', title: 'Slopes and wall slabs',
     highlights: ['NEW: SLOPES IN THE MOON’S REACH', 'WALL SLABS TO KISS MID-AIR — ANY SURFACE RELOADS'],
     items: [
@@ -292,8 +297,26 @@ function makePlat(px, py, w, a, forceStatic){
   world.flats.push(f);
   return f;
 }
+function wallClimb(a){
+  // a ladder of staggered wall slabs: kiss-reload your way up to a safe deck
+  const n = 3 + (rnd(0, 3) | 0);
+  const baseX = cursor.x;
+  let side = Math.random() < 0.5 ? 1 : -1;
+  let y = cursor.y - 260;
+  for (let i = 0; i < n; i++) {
+    const wh = rnd(160, 240), wx = baseX + side * rnd(70, 130);
+    world.flats.push({ type: 'wall', x: wx, y0: y - wh, y1: y });
+    if (Math.random() < 0.45) world.coins.push({ x: wx + side * 46, y: y - wh / 2, got: false });
+    side = -side;
+    y -= rnd(300, 380);
+  }
+  cursor = { x: baseX + rnd(-60, 60), y: y - rnd(60, 120) };
+  makePlat(cursor.x, cursor.y, rnd(300, 380), a, true);   // the safe deck
+  if (Math.random() < 0.4) coinArcAt(cursor.x, cursor.y - 90);
+}
 function genRun(){
   const a = altOf(cursor.y);
+  if (zoneAt(a) >= 2 && Math.random() < 0.2) { wallClimb(a); return; }
   const steps = 4 + (rnd(0, 4) | 0);
   for (let i = 0; i < steps; i++) {
     const t = tierPick(a);
