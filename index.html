@@ -107,8 +107,13 @@ const TIERS = [330, 560, 720];
 
 /* Every deploy adds an entry here (newest first) and bumps VERSION.
    `highlights` is the curated line playtesters see on the title screen. */
-const VERSION = '0.11.3';
+const VERSION = '0.12';
 const CHANGELOG = [
+  { v: '0.12', date: 'Aug 5', title: 'The sky never stops',
+    highlights: ['PAST THE BEYOND, THE SKY KEEPS DRIFTING — FOREVER', 'REDOS ONLY OFFERED ABOVE 300m'],
+    items: [
+      'Beyond the last named zone the sky now drifts slowly through deep hues, one full cycle every ~8000m — the high climb always feels like it’s going somewhere.',
+      'Hard rule: the redo offer never appears below 300m. Down there, the climb back IS the redo.' ] },
   { v: '0.11.3', date: 'Aug 5', title: 'Redo lands you somewhere solid',
     highlights: [],
     items: [ 'Redo now returns you to your last FLAT, permanent platform (or the ground) — never a slope, mover, crumbler, or phantom. No more rewinding into a second accident.' ] },
@@ -580,7 +585,7 @@ function step(dt){
   }
   // helpless + falling + expensive projected landing -> offer the redo
   if (state === S_PLAY && !redoPrompt && !airPrompted &&
-      jumpsLeft <= 0 && ball.vy > 320) {
+      jumpsLeft <= 0 && ball.vy > 320 && altOf(ball.y) >= 300) {   // hard rule: no redos in the foothills
     projT += dt;
     if (projT > 0.2) {
       projT = 0;
@@ -827,11 +832,26 @@ function render(t){
   // sky blends between zone palettes as you climb
   const a = altOf(ball.y);
   const zi = zoneAt(a);
-  const zn = ZONES[Math.min(zi + 1, ZONES.length - 1)];
-  const zt = zi === ZONES.length - 1 ? 0 : Math.max(0, Math.min(1, (a - zi * ZONE_M) / ZONE_M));
+  let topC, botC;
+  if (zi < ZONES.length - 1) {
+    const zn = ZONES[zi + 1];
+    const zt = Math.max(0, Math.min(1, (a - zi * ZONE_M) / ZONE_M));
+    topC = lerpHex(ZONES[zi].top, zn.top, zt);
+    botC = lerpHex(ZONES[zi].bot, zn.bot, zt);
+  } else {
+    // past the authored zones the sky never stops travelling: a slow drift
+    // through deep hues, one full cycle every ~8000m — always dark, never done
+    const d = a - (ZONES.length - 1) * ZONE_M;
+    const k = Math.min(1, d / 600);
+    const hue = (222 + d * 0.045) % 360;
+    const l1 = 1 + k * (3.5 + 1.8 * Math.sin(d * 0.0011));
+    const l2 = 4 + k * (7 + 3 * Math.sin(d * 0.0009 + 1.7));
+    topC = 'hsl(' + hue.toFixed(1) + ', 42%, ' + l1.toFixed(1) + '%)';
+    botC = 'hsl(' + ((hue + 38) % 360).toFixed(1) + ', 38%, ' + l2.toFixed(1) + '%)';
+  }
   const sky = ctx.createLinearGradient(0, 0, 0, LH);
-  sky.addColorStop(0, lerpHex(ZONES[zi].top, zn.top, zt));
-  sky.addColorStop(1, lerpHex(ZONES[zi].bot, zn.bot, zt));
+  sky.addColorStop(0, topC);
+  sky.addColorStop(1, botC);
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, LW, LH);
   // stars fade in approaching the Starfield zone, whatever size zones are
